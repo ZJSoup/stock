@@ -1,0 +1,26 @@
+# This file must never contain real credentials or real account numbers.
+# Copy to ~/.config/stock-momo/config.toml and fill in.
+host = "127.0.0.1"
+port = 4002            # paper gateway 4002 / paper TWS 7497 ; live 4001 / 7496
+client_id = 100        # any unique integer not used by another API client
+mode = "paper"         # "paper" or "live" — switching to live is manual only
+
+[risk]
+risk_pct = 0.10
+daily_loss_pct = 0.15
+giveback_pct = 0.50
+
+[window]
+start = "07:00"
+end = "10:00"
+
+[signals]
+impulse_lookback = 5
+impulse_min_pct = 0.15
+retrace_min = 0.25
+retrace_max = 0.70
+basing_low_tol = 0.003
+sell_pressure_pct = 0.65
+divergence_bars = 3
+divergence_decline = 0.30
+entry_rr = 1.0
