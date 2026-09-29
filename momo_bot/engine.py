@@ -192,6 +192,42 @@ def _force_flatten(state: State, cmds: list, reason: str) -> None:
         cmds.append(CancelAll(state.symbol))
 
 
+def _evaluate_exits(state: State, cmds: list) -> None:
+    cfg = state.settings
+    bars = state.bars.get(state.symbol, [])
+    latest = bars[-1]
+
+    # projected 1R extension target reached -> halve, stop to breakeven.
+    # position_qty is mutated only when the sell Fill comes back; the stop
+    # replacement is sized for the remainder right now.
+    if not state.reduced and state.target is not None and latest.high >= state.target:
+        half = state.position_qty // 2
+        if half > 0:
+            cmds.append(Exit(state.symbol, half, latest.close, "target"))
+            state.reduced = True
+            # stop-to-breakeven is emitted from _on_fill only after the half
+            # sell has actually filled, so the cancel can't kill this exit
+
+    if state.position_qty <= 0:
+        return
+
+    if is_topping_tail(latest) or is_doji(latest):
+        _force_flatten(state, cmds, "candle pattern")
+    elif volume_divergence(bars, cfg.divergence_bars, cfg.divergence_decline):
+        _force_flatten(state, cmds, "divergence")
+
+
+def _on_ticks(state: State, event: Ticks, cmds: list) -> None:
+    if event.symbol != state.symbol or state.phase != "IN_POSITION":
+        return
+    cfg = state.settings
+    ratio = sell_pressure_ratio(event.ticks)
+    if ratio >= cfg.sell_pressure_pct:
+        _force_flatten(state, cmds, "tape pressure")
+    if _maybe_hard_risk(state, cmds):
+        return
+
+
 def _on_halt(state: State, event: Halted, cmds: list) -> None:
     # Spec: on halt cancel all working orders; on resumption only the
     # pre-existing stop may act, never a new entry.
@@ -354,3 +390,40 @@ def handle(state: State, event) -> tuple[State, list]:
     elif isinstance(event, Halted):
         _on_halt(state, event, cmds)
     return state, cmds
+
+
+def restore_state(date, settings, snapshot, has_broker_position, broker_qty, last_price):
+    """Rebuild a reducer State from an on-disk Snapshot plus a broker reconcile.
+    Reconcile rules: a DONE lock wins (monitor only); a broker position that
+    matches the snapshot is rebuilt as IN_POSITION; a broker position without
+    a snapshot raises and waits for manual review; never auto-add."""
+    if snapshot is None:
+        state = initial_state(date, settings)
+        if has_broker_position and broker_qty > 0:
+            raise ValueError("broker position with no snapshot: manual review required")
+        return state
+    state = initial_state(date, settings)
+    state.start_equity = snapshot.start_equity
+    state.phase = snapshot.phase
+    state.symbol = snapshot.symbol
+    state.con_id = snapshot.con_id
+    state.grade = snapshot.grade
+    state.shares = snapshot.shares
+    state.entry = snapshot.entry
+    state.stop = snapshot.stop
+    state.target = snapshot.target
+    state.realized_pnl = snapshot.realized_pnl
+    state.peak_pnl = snapshot.peak_pnl
+    state.reduced = snapshot.reduced
+    state.done = snapshot.done
+    if snapshot.done:
+        return state  # monitor only for the rest of the day
+    if has_broker_position:
+        state.position_qty = broker_qty
+        state.phase = "IN_POSITION"
+        if last_price is not None:
+            state.bars[state.symbol] = [
+                Bar(dt.datetime.fromisoformat(date + "T00:00:00"),
+                    last_price, last_price, last_price, last_price, 0.0)
+            ]
+    return state
