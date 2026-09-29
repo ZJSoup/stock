@@ -106,3 +106,55 @@ def is_basing(bars: list[Bar], pullback: Pullback, low_tol: float) -> bool:
 
 def is_crossing_candle(bar: Bar, breakout_level: float) -> bool:
     return bar.high > breakout_level
+
+
+def _body(bar: Bar) -> float:
+    return abs(bar.close - bar.open)
+
+
+def _range(bar: Bar) -> float:
+    return bar.high - bar.low
+
+
+def is_topping_tail(bar: Bar) -> bool:
+    body = _body(bar)
+    upper = bar.high - max(bar.open, bar.close)
+    rng = _range(bar)
+    if rng <= 0:
+        return False
+    return upper >= 2 * body and upper / rng >= 0.4
+
+
+def is_doji(bar: Bar) -> bool:
+    rng = _range(bar)
+    if rng <= 0:
+        return True
+    return _body(bar) / rng <= 0.10
+
+
+def volume_divergence(bars: list[Bar], n: int, decline: float) -> bool:
+    if len(bars) < n:
+        return False
+    window = bars[-n:]
+    if window[-1].high <= max(b.high for b in window[:-1]):
+        return False  # no new high, nothing to diverge from
+    first_vol = window[0].volume
+    if first_vol <= 0:
+        return False
+    shrink = (first_vol - window[-1].volume) / first_vol
+    return shrink >= decline
+
+
+def sell_pressure_ratio(ticks: list[Tick]) -> float:
+    total = sum(t.size for t in ticks)
+    if total <= 0:
+        return 0.0
+    sold = sum(t.size for t in ticks if t.side == "S")
+    return sold / total
+
+
+def risk_reward(entry: float, stop: float, target: float) -> float:
+    risk = abs(entry - stop)
+    if risk <= 0:
+        return 0.0
+    return abs(target - entry) / risk
