@@ -1,8 +1,9 @@
 import datetime as dt
+import dataclasses
 from momo_bot.config import load_config
 from momo_bot.engine import (
     initial_state, handle, Clock, Account, ScanResults, Bars, Fill,
-    Enter, AttachStop, LockDay, Subscribe,
+    Enter, AttachStop, LockDay, Subscribe, Violation,
 )
 from momo_bot.pillars import Candidate
 from momo_bot.signals import Bar
@@ -59,3 +60,21 @@ def test_lock_after_window():
     s, cmds = run(s, Clock(dt.datetime(2026, 9, 29, 10, 1)))
     assert s.done is True
     assert any(isinstance(c, LockDay) for c in cmds)
+
+def test_scan_no_graded_candidates():
+    s = initial_state("2026-09-29", settings())
+    s, _ = run(s, Account(2000, 2000))
+    # Create a candidate with no grade (None)
+    ungraded_candidate = dataclasses.replace(candidate(), grade=None)
+    s, cmds = run(s, ScanResults(candidates=[ungraded_candidate]))
+    assert s.phase == "SCANNING"
+    assert s.symbol is None
+    assert not any(isinstance(c, Subscribe) for c in cmds)
+
+def test_stray_buy_fill():
+    s = initial_state("2026-09-29", settings())
+    s, _ = run(s, Account(2000, 2000))
+    # Stray buy fill when phase is SCANNING (not ENTERING)
+    s, cmds = run(s, Fill("ZTG", qty=100, price=6.0, side="B"))
+    assert s.phase == "SCANNING"
+    assert any(isinstance(c, Violation) for c in cmds)

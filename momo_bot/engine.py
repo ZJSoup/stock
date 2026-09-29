@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import dataclasses
 import datetime as dt
 from dataclasses import dataclass, field
 
@@ -193,6 +192,14 @@ def _force_flatten(state: State, cmds: list, reason: str) -> None:
         cmds.append(CancelAll(state.symbol))
 
 
+def _on_halt(state: State, event: Halted, cmds: list) -> None:
+    # Spec: on halt cancel all working orders; on resumption only the
+    # pre-existing stop may act, never a new entry.
+    if event.symbol == state.symbol and event.halted:
+        cmds.append(CancelAll(state.symbol))
+        cmds.append(Snapshot())
+
+
 # ---- Event handlers -------------------------------------------------------
 
 def _on_clock(state: State, event: Clock, cmds: list) -> None:
@@ -210,6 +217,8 @@ def _on_account(state: State, event: Account, cmds: list) -> None:
     state.settled_cash = event.settled_cash
     if state.phase == "IDLE":
         state.phase = "SCANNING"
+    if state.done:
+        return
     if _maybe_hard_risk(state, cmds):
         return
 
@@ -217,8 +226,14 @@ def _on_account(state: State, event: Account, cmds: list) -> None:
 def _on_scan(state: State, event: ScanResults, cmds: list) -> None:
     if state.phase != "SCANNING" or not event.candidates:
         return
-    # Ross: trade the most obvious name; grade order A+ > A > B
-    ranked = sorted(event.candidates, key=lambda c: {"A+": 0, "A": 1, "B": 2}[c.grade])
+    # Ross: trade the most obvious name; grade order A+ > A > B.
+    # Ungraded (None) candidates sort last and are never picked while any
+    # graded name exists.
+    ranked = sorted(
+        event.candidates, key=lambda c: {"A+": 0, "A": 1, "B": 2}.get(c.grade, 3)
+    )
+    if ranked[0].grade is None:
+        return
     pick = ranked[0]
     state.symbol = pick.symbol
     state.con_id = pick.con_id
@@ -272,22 +287,37 @@ def _on_bars(state: State, event: Bars, cmds: list) -> None:
         _evaluate_entry(state, cmds)
     elif state.phase == "IN_POSITION":
         _evaluate_exits(state, cmds)
+    if state.done:
+        return
     if _maybe_hard_risk(state, cmds):
         return
 
 
 def _on_fill(state: State, event: Fill, cmds: list) -> None:
     if event.side == "B":
+        # Buy-fill discipline: only accept BUY fill when in ENTERING phase and stop is set
+        if state.phase != "ENTERING" or state.stop is None:
+            cmds.append(Violation("unexpected buy fill"))
+            cmds.append(Snapshot())
+            return
         state.position_qty += event.qty
         if state.entry is None:
             state.entry = event.price
         state.phase = "IN_POSITION"
         cmds.append(AttachStop(state.symbol, state.position_qty, state.stop))
     else:
+        # Sell-fill robustness: validate state before processing sell fill
+        if state.entry is None or state.position_qty <= 0:
+            cmds.append(Violation("unexpected sell fill"))
+            cmds.append(Snapshot())
+            return
         pnl = (event.price - state.entry) * event.qty
         state.realized_pnl += pnl
         state.position_qty -= event.qty
         if state.reduced and state.position_qty > 0 and state.stop != state.entry:
+            # Adopt the new stop locally at once so snapshots agree with the
+            # broker-side order that ReplaceStop produces.
+            state.stop = state.entry
             cmds.append(ReplaceStop(state.symbol, state.position_qty, state.entry))
         if state.position_qty <= 0:
             state.phase = "DONE"
@@ -321,4 +351,6 @@ def handle(state: State, event) -> tuple[State, list]:
         _on_ticks(state, event, cmds)
     elif isinstance(event, Fill):
         _on_fill(state, event, cmds)
+    elif isinstance(event, Halted):
+        _on_halt(state, event, cmds)
     return state, cmds
