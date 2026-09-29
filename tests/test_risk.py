@@ -19,3 +19,8 @@ def test_window():
     assert in_trading_window(now, dt.time(7, 0), dt.time(10, 0)) is True
     assert past_window(dt.datetime(2026, 9, 29, 10, 1), dt.time(10, 0)) is True
     assert past_window(now, dt.time(10, 0)) is False
+
+    # Boundary tests for exact time
+    assert in_trading_window(dt.datetime(2026, 9, 29, 7, 0), dt.time(7, 0), dt.time(10, 0)) is True
+    assert in_trading_window(dt.datetime(2026, 9, 29, 10, 0), dt.time(7, 0), dt.time(10, 0)) is True
+    assert past_window(dt.datetime(2026, 9, 29, 10, 0), dt.time(10, 0)) is False
