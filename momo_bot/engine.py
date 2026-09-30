@@ -174,7 +174,12 @@ def _maybe_hard_risk(state: State, cmds: list) -> bool:
     callers must stop further evaluation for this event when it does."""
     total = _total_pnl(state)
     state.peak_pnl = max(state.peak_pnl, total)
-    if risk.daily_loss_hit(state.start_equity, total, state.settings.daily_loss_pct):
+    # start_equity is unknown right after restoring a legacy snapshot that
+    # lacks the field; daily-loss against a 0 base would fire on ANY negative
+    # flicker. Skip the check until the first Account event establishes real
+    # equity (the runtime also fetches the account before subscribing).
+    if (state.start_equity > 0
+            and risk.daily_loss_hit(state.start_equity, total, state.settings.daily_loss_pct)):
         _force_flatten(state, cmds, "daily loss")
         _lock(state, "daily loss", cmds)
         return True
@@ -195,26 +200,30 @@ def _force_flatten(state: State, cmds: list, reason: str) -> None:
 def _evaluate_exits(state: State, cmds: list) -> None:
     cfg = state.settings
     bars = state.bars.get(state.symbol, [])
+    if not bars:
+        return
     latest = bars[-1]
 
-    # projected 1R extension target reached -> halve, stop to breakeven.
+    # An exit signal takes priority over the planned halve: if THIS bar is a
+    # topping tail/doji or shows volume divergence, flatten the whole position
+    # immediately and return. This keeps a single Exit+CancelAll per event —
+    # never a half-exit plus a full-qty force-flatten for the same bar.
+    if is_topping_tail(latest) or is_doji(latest):
+        _force_flatten(state, cmds, "candle pattern")
+        return
+    if volume_divergence(bars, cfg.divergence_bars, cfg.divergence_decline):
+        _force_flatten(state, cmds, "divergence")
+        return
+
+    # No exit signal: the projected 1R extension target reached -> halve.
     # position_qty is mutated only when the sell Fill comes back; the stop
-    # replacement is sized for the remainder right now.
+    # replacement is sized for the remainder and emitted from _on_fill after
+    # the half sell has actually filled, so the cancel can't kill this exit.
     if not state.reduced and state.target is not None and latest.high >= state.target:
         half = state.position_qty // 2
         if half > 0:
             cmds.append(Exit(state.symbol, half, latest.close, "target"))
             state.reduced = True
-            # stop-to-breakeven is emitted from _on_fill only after the half
-            # sell has actually filled, so the cancel can't kill this exit
-
-    if state.position_qty <= 0:
-        return
-
-    if is_topping_tail(latest) or is_doji(latest):
-        _force_flatten(state, cmds, "candle pattern")
-    elif volume_divergence(bars, cfg.divergence_bars, cfg.divergence_decline):
-        _force_flatten(state, cmds, "divergence")
 
 
 def _on_ticks(state: State, event: Ticks, cmds: list) -> None:
@@ -426,4 +435,14 @@ def restore_state(date, settings, snapshot, has_broker_position, broker_qty, las
                 Bar(dt.datetime.fromisoformat(date + "T00:00:00"),
                     last_price, last_price, last_price, last_price, 0.0)
             ]
+    elif state.phase not in ("IDLE", "SCANNING"):
+        # Snapshot shows a pre-fill/ENTERING or pullback-watch phase but the
+        # broker has NO position: the buy never filled (or died with the
+        # process). No round-trip has been consumed, and in-memory bars are
+        # not in the snapshot, so the watch state cannot be rebuilt. Start
+        # clean (the next Clock event re-enters SCANNING); do not carry a
+        # phantom symbol/shares forward.
+        fresh = initial_state(date, settings)
+        fresh.start_equity = state.start_equity
+        return fresh
     return state

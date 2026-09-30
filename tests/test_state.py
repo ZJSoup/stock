@@ -4,7 +4,7 @@ from momo_bot.state import Snapshot, save_snapshot, load_snapshot, clear_snapsho
 def snap():
     return Snapshot(
         date="2026-09-29", phase="IN_POSITION", symbol="ZTG", con_id=123,
-        shares=300, position_qty=300, entry=6.0, stop=5.9, target=6.2,
+        grade="B", shares=300, position_qty=300, entry=6.0, stop=5.9, target=6.2,
         realized_pnl=0.0, peak_pnl=12.0, reduced=False, done=False,
     )
 

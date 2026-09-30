@@ -21,6 +21,7 @@ class Snapshot:
     peak_pnl: float
     reduced: bool
     done: bool
+    grade: str | None = None
     start_equity: float = 0.0
 
 
