@@ -19,8 +19,8 @@ def parse_float(value) -> float | None:
     try:
         if tail in SUFFIX:
             result = float(text[:-1]) * SUFFIX[tail]
-            # Round to nearest integer to handle floating point precision
-            return round(result)
+            # Round to nearest integer to handle floating point precision, maintain float return type
+            return float(round(result))
         result = float(text)
         return result
     except ValueError:
