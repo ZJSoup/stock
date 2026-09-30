@@ -440,7 +440,7 @@ def restore_state(date, settings, snapshot, has_broker_position, broker_qty, las
         # broker has NO position: the buy never filled (or died with the
         # process). No round-trip has been consumed, and in-memory bars are
         # not in the snapshot, so the watch state cannot be rebuilt. Start
-        # clean (the next Clock event re-enters SCANNING); do not carry a
+        # clean (the next Account event re-enters SCANNING); do not carry a
         # phantom symbol/shares forward.
         fresh = initial_state(date, settings)
         fresh.start_equity = state.start_equity
