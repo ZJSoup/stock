@@ -1,7 +1,7 @@
 import asyncio
 import unittest.mock as mock
 from ib_insync import LimitOrder, StopOrder
-from momo_bot.execution import Executor
+from momo_bot.execution import Executor, Fill
 from momo_bot.engine import Enter, AttachStop, ReplaceStop, Exit, CancelAll
 
 def ib_mock():
@@ -42,6 +42,39 @@ def test_stop_order_is_stop_not_market():
     run(ex.stop(contract, 100, 5.9))
     order = ib.placeOrder.call_args.args[1]
     assert isinstance(order, StopOrder) and order.auxPrice == 5.9
+
+
+def test_enter_order_carries_momo_tag():
+    ib = ib_mock()
+    ib.placeOrder.side_effect = lambda c, o: setattr(o, "permId", 1)
+    ib.waitOnUpdate = mock.AsyncMock()
+    ex = Executor(ib)
+    with mock.patch.object(ex, "_await_fill", new=mock.AsyncMock(return_value=Fill(100, 6.01, "BUY"))):
+        run(ex.enter(contract, 100, 6.0))
+    assert ib.placeOrder.call_args.args[1].orderRef == "tag:momo"
+
+
+def test_stop_order_carries_momo_tag():
+    ib = ib_mock()
+    ex = Executor(ib)
+    run(ex.stop(contract, 100, 5.9))
+    assert ib.placeOrder.call_args.args[1].orderRef == "tag:momo"
+
+
+def test_exit_order_carries_momo_tag():
+    ib = ib_mock()
+    ib.waitOnUpdate = mock.AsyncMock()
+    ex = Executor(ib)
+    with mock.patch.object(ex, "_await_fill", new=mock.AsyncMock(return_value=Fill(100, 5.98, "SELL"))):
+        run(ex.exit_position(contract, 100, 6.0))
+    assert ib.placeOrder.call_args.args[1].orderRef == "tag:momo"
+
+
+def test_replace_stop_order_carries_momo_tag():
+    ib = ib_mock()
+    ex = Executor(ib)
+    run(ex.replace_stop(contract, 86, 6.0))
+    assert ib.placeOrder.call_args.args[1].orderRef == "tag:momo"
 
 def test_exit_sells_marketable_limit():
     ib = ib_mock()

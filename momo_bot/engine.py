@@ -401,16 +401,21 @@ def handle(state: State, event) -> tuple[State, list]:
     return state, cmds
 
 
-def restore_state(date, settings, snapshot, has_broker_position, broker_qty, last_price):
-    """Rebuild a reducer State from an on-disk Snapshot plus a broker reconcile.
-    Reconcile rules: a DONE lock wins (monitor only); a broker position that
-    matches the snapshot is rebuilt as IN_POSITION; a broker position without
-    a snapshot raises and waits for manual review; never auto-add."""
+def restore_state(date, settings, snapshot, mine_qty, mine_last_price,
+                  has_unclaimed) -> tuple[State, str]:
+    """Rebuild a reducer State from an on-disk Snapshot plus an ownership
+    reconcile of own positions only. Returns (state, mode) with mode in
+    {"normal", "readonly"}; readonly tracks state but never opens new
+    positions. A DONE lock, an unclaimed holding, or an own position without
+    a snapshot all produce readonly; never crash-exits or auto-adds."""
+    readonly = bool(has_unclaimed)
     if snapshot is None:
         state = initial_state(date, settings)
-        if has_broker_position and broker_qty > 0:
-            raise ValueError("broker position with no snapshot: manual review required")
-        return state
+        if mine_qty and mine_qty > 0:
+            # Own-classified broker position, no local snapshot: exits cannot
+            # be rebuilt — monitor only and wait for manual review.
+            readonly = True
+        return state, "readonly" if readonly else "normal"
     state = initial_state(date, settings)
     state.start_equity = snapshot.start_equity
     state.phase = snapshot.phase
@@ -426,14 +431,15 @@ def restore_state(date, settings, snapshot, has_broker_position, broker_qty, las
     state.reduced = snapshot.reduced
     state.done = snapshot.done
     if snapshot.done:
-        return state  # monitor only for the rest of the day
-    if has_broker_position:
-        state.position_qty = broker_qty
+        return state, "readonly"  # monitor only for the rest of the day
+    if mine_qty and mine_qty > 0:
+        state.position_qty = mine_qty
         state.phase = "IN_POSITION"
-        if last_price is not None:
+        if mine_last_price is not None:
             state.bars[state.symbol] = [
                 Bar(dt.datetime.fromisoformat(date + "T00:00:00"),
-                    last_price, last_price, last_price, last_price, 0.0)
+                    mine_last_price, mine_last_price, mine_last_price,
+                    mine_last_price, 0.0)
             ]
     elif state.phase not in ("IDLE", "SCANNING"):
         # Snapshot shows a pre-fill/ENTERING or pullback-watch phase but the
@@ -444,5 +450,5 @@ def restore_state(date, settings, snapshot, has_broker_position, broker_qty, las
         # phantom symbol/shares forward.
         fresh = initial_state(date, settings)
         fresh.start_equity = state.start_equity
-        return fresh
-    return state
+        return fresh, "readonly" if readonly else "normal"
+    return state, "readonly" if readonly else "normal"

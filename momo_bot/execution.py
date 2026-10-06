@@ -5,6 +5,10 @@ import datetime as dt
 
 from ib_insync import LimitOrder, StopOrder
 
+from common.ownership import make_order_ref
+
+ORDER_REF = make_order_ref("momo")
+
 
 @dataclasses.dataclass(frozen=True)
 class Fill:
@@ -31,12 +35,14 @@ class Executor:
         raise TimeoutError("order did not fill in time")
 
     async def enter(self, contract, qty, ref_price) -> Fill:
-        order = LimitOrder("BUY", qty, round(ref_price * 1.002, 4), tif="DAY")
+        order = LimitOrder("BUY", qty, round(ref_price * 1.002, 4), tif="DAY",
+                           orderRef=ORDER_REF)
         trade = self.ib.placeOrder(contract, order)
         return await self._await_fill(trade)
 
     async def stop(self, contract, qty, stop_price):
-        order = StopOrder("SELL", qty, round(stop_price, 4), tif="DAY")
+        order = StopOrder("SELL", qty, round(stop_price, 4), tif="DAY",
+                          orderRef=ORDER_REF)
         return self.ib.placeOrder(contract, order)
 
     async def replace_stop(self, contract, qty, stop_price):
@@ -47,11 +53,13 @@ class Executor:
             if (order.action == "SELL" and order.orderType == "STP"
                     and trade.contract.symbol == contract.symbol):
                 self.ib.cancelOrder(order)
-        order = StopOrder("SELL", qty, round(stop_price, 4), tif="DAY")
+        order = StopOrder("SELL", qty, round(stop_price, 4), tif="DAY",
+                          orderRef=ORDER_REF)
         return self.ib.placeOrder(contract, order)
 
     async def exit_position(self, contract, qty, ref_price) -> Fill:
-        order = LimitOrder("SELL", qty, round(ref_price * 0.998, 4), tif="DAY")
+        order = LimitOrder("SELL", qty, round(ref_price * 0.998, 4), tif="DAY",
+                           orderRef=ORDER_REF)
         trade = self.ib.placeOrder(contract, order)
         return await self._await_fill(trade)
 

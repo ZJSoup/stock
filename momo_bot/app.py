@@ -8,6 +8,9 @@ from zoneinfo import ZoneInfo
 
 from ib_insync import IB, Stock
 
+from common.reconcile import reconcile
+from common.risk_client import RiskBudgetClient
+
 from . import engine as eng
 from .enrich import enrich
 from .execution import Executor
@@ -75,6 +78,8 @@ class App:
         self._tick_window: dict[str, list] = {}    # 30 s rolling tape window
         self._last_halt: dict[str, int] = {}       # last halted flag per symbol
         self._fatal = False                        # unrecoverable adapter error
+        self.mode = "normal"                       # or "readonly": no entries
+        self.risk = RiskBudgetClient()             # fail-closed entry gate
 
     async def run(self):
         await self.ib.connectAsync(self.settings.host, self.settings.port,
@@ -84,19 +89,24 @@ class App:
         # Explicit request: the auto-started position download is often still
         # empty the instant connectAsync returns.
         positions = await self.ib.reqPositionsAsync()
-        # Even with no snapshot we must NOT ignore real positions: restore
-        # raises in that case and run() aborts before any trading.
-        wanted = snap.symbol if snap else None
-        broker_pos = next(
-            (p for p in positions
-             if wanted is None or p.contract.symbol == wanted),
-            None,
-        )
-        self.state = eng.restore_state(
+        # Ownership reconcile. Execution objects lack conId; fills carry both
+        # contract and clientId, so classify with fills. Others' positions are
+        # ignored; unclaimed positions put us into readonly monitor mode.
+        mine, _others, unclaimed = reconcile(
+            "momo", positions, self.ib.fills())
+        if unclaimed:
+            symbols = sorted({p.contract.symbol for p in unclaimed})
+            record_violation(
+                self.data_dir,
+                f"unclaimed positions, readonly monitor mode: {symbols}",
+                today,
+            )
+        own = mine[0] if mine else None
+        self.state, self.mode = eng.restore_state(
             today, self.settings, snap,
-            has_broker_position=broker_pos is not None,
-            broker_qty=int(abs(broker_pos.position)) if broker_pos else 0,
-            last_price=broker_pos.avgCost if broker_pos else None,
+            mine_qty=int(abs(own.position)) if own else 0,
+            mine_last_price=own.avgCost if own else None,
+            has_unclaimed=bool(unclaimed),
         )
         # Establish real equity (and thus a valid daily-loss threshold)
         # BEFORE subscribing to market events, so a restored state can never
@@ -282,6 +292,11 @@ class App:
         )
         return None
 
+    def _entry_allowed(self) -> tuple[bool, str]:
+        if self.mode == "readonly":
+            return False, "readonly monitor mode"
+        return self.risk.can_open("momo")
+
     def _execute_commands(self, commands):
         # Event callbacks run inside the ib event loop's thread: schedule
         # follow-up coroutines on that loop instead of nesting ib.run().
@@ -289,7 +304,19 @@ class App:
         for cmd in commands:
             if isinstance(cmd, eng.Subscribe):
                 asyncio.ensure_future(self._subscribe(cmd.symbol), loop=loop)
-            elif isinstance(cmd, (eng.Enter, eng.AttachStop, eng.ReplaceStop,
+            elif isinstance(cmd, eng.Enter):
+                # Fail-closed gate: readonly mode or risk budget (unreachable
+                # dashboard, halt, or budget exceeded) skips the entry and
+                # journals the reason.
+                ok, reason = self._entry_allowed()
+                if not ok:
+                    record_violation(
+                        self.data_dir, f"entry skipped: {reason}",
+                        self.state.date)
+                else:
+                    asyncio.ensure_future(
+                        self._order_and_fill(cmd), loop=loop)
+            elif isinstance(cmd, (eng.AttachStop, eng.ReplaceStop,
                                  eng.Exit, eng.CancelAll)):
                 asyncio.ensure_future(self._order_and_fill(cmd), loop=loop)
             elif isinstance(cmd, eng.Journal):
@@ -301,4 +328,5 @@ class App:
 
     async def stop(self):
         if self.ib.isConnected():
-            await self.ib.disconnectAsync()
+            # ib_insync 0.9.86 has no disconnectAsync; disconnect is coroutine-safe
+            self.ib.disconnect()

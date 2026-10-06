@@ -99,7 +99,8 @@ def test_restore_legacy_snapshot_daily_loss_gate():
         target=6.25, realized_pnl=0.0, peak_pnl=0.0, reduced=False, done=False,
         start_equity=0.0,  # legacy: field missing on disk, loads as default
     )
-    s = restore_state("2026-09-29", settings(), snap, True, 172, 6.0)
+    s, mode = restore_state("2026-09-29", settings(), snap, 172, 6.0, False)
+    assert mode == "normal"
     assert s.start_equity == 0.0
     assert s.phase == "IN_POSITION"
     # Small unrealized loss — 172 * (5.98 - 6.0) = -3.44. With start_equity=0
@@ -121,6 +122,22 @@ def test_restore_legacy_snapshot_daily_loss_gate():
     assert any(isinstance(c, LockDay) for c in cmds)
 
 
+def test_unclaimed_returns_readonly_mode():
+    s, mode = restore_state("2026-09-29", settings(), None, 0, None, True)
+    assert mode == "readonly"
+    assert s.phase == "IDLE"
+
+
+def test_others_positions_not_passed_normal_start():
+    s, mode = restore_state("2026-09-29", settings(), None, 0, None, False)
+    assert mode == "normal"
+
+
+def test_own_position_no_snapshot_is_readonly_not_crash():
+    s, mode = restore_state("2026-09-29", settings(), None, 100, 6.0, False)
+    assert mode == "readonly"
+
+
 def test_restore_entering_no_broker_position_resets():
     # Snapshot says ENTERING but the broker has no position: buy never filled.
     # restore_state should return a clean IDLE state carrying start_equity
@@ -131,7 +148,8 @@ def test_restore_entering_no_broker_position_resets():
         target=6.25, realized_pnl=0.0, peak_pnl=0.0, reduced=False, done=False,
         start_equity=2000.0,
     )
-    s = restore_state("2026-09-29", settings(), snap, False, 0, None)
+    s, mode = restore_state("2026-09-29", settings(), snap, 0, None, False)
+    assert mode == "normal"
     assert s.phase == "IDLE"
     assert s.symbol is None
     assert s.shares == 0
