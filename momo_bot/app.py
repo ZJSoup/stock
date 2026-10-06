@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 from ib_insync import IB, Stock
 
+from common.ownership import adapt_fills
 from common.reconcile import reconcile
 from common.risk_client import RiskBudgetClient
 
@@ -93,7 +94,7 @@ class App:
         # contract and clientId, so classify with fills. Others' positions are
         # ignored; unclaimed positions put us into readonly monitor mode.
         mine, _others, unclaimed = reconcile(
-            "momo", positions, self.ib.fills())
+            "momo", positions, adapt_fills(self.ib.fills()))
         if unclaimed:
             symbols = sorted({p.contract.symbol for p in unclaimed})
             record_violation(

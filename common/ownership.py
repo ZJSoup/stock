@@ -25,6 +25,22 @@ def parse_order_ref(ref: str | None) -> str | None:
     return None
 
 
+class ExecutionView:
+    """Ownership-protocol execution: contract (with conId) + clientId."""
+    __slots__ = ("contract", "clientId")
+
+    def __init__(self, contract, client_id):
+        self.contract = contract
+        self.clientId = client_id
+
+
+def adapt_fills(fills: list) -> list:
+    """Adapt ib_insync Fill objects (contract + execution.clientId) to the
+    ownership protocol. ib_insync Execution objects themselves carry no
+    conId; Fill carries both."""
+    return [ExecutionView(f.contract, f.execution.clientId) for f in fills]
+
+
 def classify_holdings(positions: list, executions: list | None = None) -> dict[str, list]:
     """Classify positions into per-strategy buckets plus an "unclaimed" bucket.
 

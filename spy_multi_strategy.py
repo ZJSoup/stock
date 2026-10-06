@@ -24,9 +24,9 @@ TURBO（--mode turbo，周翻倍目标，高风险）：
 - 回测：60 天 PF 1.01（+15%），3 年 PF 2.28（+11131%，上限 20 张/笔）
 - ⚠️ 35-50% 回撤是真实的，账户要扛得住
 
-50/50 分仓同时跑两个模式：
-  终端1: python3 spy_multi_strategy.py --mode steady --capital-pct 50 --client-id 2
-  终端2: python3 spy_multi_strategy.py --mode turbo  --capital-pct 50 --client-id 3
+50/50 分仓同时跑两个模式（clientId 按 mode 固定：steady=2 / turbo=3）：
+  终端1: python3 spy_multi_strategy.py --mode steady --capital-pct 50
+  终端2: python3 spy_multi_strategy.py --mode turbo  --capital-pct 50
 
 通用过滤：
 - VIX 期限结构 backwardation → 不交易
@@ -49,6 +49,10 @@ from enum import Enum
 import yfinance as yf
 import numpy as np
 import pandas as pd
+
+from common.ownership import CLIENT_IDS, adapt_fills, make_order_ref
+from common.reconcile import reconcile
+from common.risk_client import RiskBudgetClient
 
 # ---------------------------------------------------------------------------
 # Macro event calendar
@@ -437,21 +441,36 @@ STRATEGY_PARAMS_TURBO = {
 }
 
 class SPYMultiStrategyTrader:
-    def __init__(self, host='127.0.0.1', port=4002, client_id=2, live=False,
+    def __init__(self, host='127.0.0.1', port=4002, client_id=None, live=False,
                  mode='steady', capital_pct=100):
         """
         host/port: IB 连接目标。默认 4002 = IB Gateway paper。
         live=True 会切到 4001 (Gateway 实盘) 并要求端口显式传入才敢下单。
         mode: 'steady'（3个月翻倍路径）或 'turbo'（周翻倍，高风险）。
         capital_pct: 使用账户资金的百分比（50/50 分仓时各传 50）。
+        client_id 不再自由指定：按 mode 从 CLIENT_IDS 取固定值（steady 2 /
+        turbo 3）；显式传入不匹配的值直接报错。
         """
         self.ib = IB()
         self.host = host
         self.port = port
-        self.client_id = client_id
         self.live = live
         self.mode = mode
         self.capital_pct = capital_pct
+
+        # Fixed clientIds and order tag per strategy.
+        self.strategy_id = f'spy-{mode}'
+        fixed_id = CLIENT_IDS[self.strategy_id]
+        if client_id is not None and client_id != fixed_id:
+            raise ValueError(
+                f"client_id {client_id} does not match fixed id {fixed_id} "
+                f"for {self.strategy_id}")
+        self.client_id = fixed_id
+        self.order_ref = make_order_ref(self.strategy_id)
+        # Read-only monitor mode: unclaimed positions found at startup.
+        self.readonly_monitor = False
+        # Fail-closed risk budget gate.
+        self.risk = RiskBudgetClient()
         # paper 端口白名单，任何不在里面的组合都视作实盘
         self.is_paper = (port in (4002, 7497)) and not live
 
@@ -510,10 +529,63 @@ class SPYMultiStrategyTrader:
                 f"资金: {self.capital_pct:.0f}% (${self.working_capital:,.2f} "
                 f"of ${self.account_value:,.2f})"
             )
+
+            # Startup ownership reconcile: only own positions are restored;
+            # others' positions are ignored; unclaimed holdings put us into
+            # read-only monitor mode (no entries, never crash-exit).
+            self.ib.sleep(1)
+            mine, _others, unclaimed = reconcile(
+                self.strategy_id, self.ib.positions(),
+                adapt_fills(self.ib.fills()))
+            if unclaimed:
+                syms = sorted({p.contract.symbol for p in unclaimed})
+                logger.warning(
+                    f"⚠️ unclaimed positions {syms}: readonly monitor mode, "
+                    "no new entries, waiting for manual review")
+                self.readonly_monitor = True
+            if mine and self.current_position is None:
+                self.current_position = self._restore_from_broker(mine[0])
+                logger.info("已从 broker 恢复自有持仓状态")
+
             return True
         except Exception as e:
             logger.error(f"连接失败: {e}")
             return False
+
+    def _restore_from_broker(self, pos):
+        """Build the existing current_position dict shape from an own
+        PortfolioItem/Position. Best effort: entry debit is derived from
+        avgCost (per-share cost / 100 for options)."""
+        c = pos.contract
+        right = c.right
+        if self.mode == 'turbo':
+            enum = (Strategy.TURBO_LONG_CALL if right == 'C'
+                    else Strategy.TURBO_LONG_PUT)
+        else:
+            enum = (Strategy.DIRECTIONAL_LONG_CALL if right == 'C'
+                    else Strategy.DIRECTIONAL_LONG_PUT)
+        debit = 0.0
+        if c.secType == 'OPT':
+            try:
+                debit = float(pos.avgCost) / 100.0
+            except (TypeError, ValueError):
+                debit = 0.0
+        return {
+            'strategy': enum,
+            'contracts': int(abs(pos.position)),
+            'strikes': {'strike': float(c.strike), 'right': right},
+            'credit_debit': debit,
+            'is_credit': False,
+            'legs': {'long': {'contract': c}},
+            'params': self.strategy_params[enum],
+        }
+
+    def _entry_blocked(self):
+        """Return None when a new entry is allowed, else the blocking reason."""
+        if self.readonly_monitor:
+            return 'readonly monitor mode (unclaimed positions)'
+        ok, reason = self.risk.can_open(self.strategy_id)
+        return None if ok else reason
 
     # ------------------------------------------------------------------
     # Kill switch / 会话状态
@@ -1023,6 +1095,10 @@ class SPYMultiStrategyTrader:
     
     def place_iron_condor(self, expiry, strikes, params):
         """下单Iron Condor"""
+        blocked = self._entry_blocked()
+        if blocked:
+            logger.warning(f"⛔ Iron Condor 不开新仓: {blocked}")
+            return None
         call_sell = self.get_option_price(expiry, strikes['call_sell'], 'C')
         call_buy = self.get_option_price(expiry, strikes['call_buy'], 'C')
         put_sell = self.get_option_price(expiry, strikes['put_sell'], 'P')
@@ -1067,7 +1143,7 @@ class SPYMultiStrategyTrader:
         ]
         
         for i, (contract, action) in enumerate(legs):
-            order = MarketOrder(action, contracts)
+            order = MarketOrder(action, contracts, orderRef=self.order_ref)
             order.transmit = (i == len(legs) - 1)
             trade = self.ib.placeOrder(contract, order)
             order_list.append(trade)
@@ -1086,6 +1162,10 @@ class SPYMultiStrategyTrader:
     
     def place_butterfly(self, expiry, strikes, params):
         """下单Call Butterfly"""
+        blocked = self._entry_blocked()
+        if blocked:
+            logger.warning(f"⛔ Butterfly 不开新仓: {blocked}")
+            return None
         lower = self.get_option_price(expiry, strikes['lower'], 'C')
         middle = self.get_option_price(expiry, strikes['middle'], 'C')
         upper = self.get_option_price(expiry, strikes['upper'], 'C')
@@ -1127,7 +1207,7 @@ class SPYMultiStrategyTrader:
                 contract, action, qty_mult = item
                 qty = contracts * qty_mult
             
-            order = MarketOrder(action, qty)
+            order = MarketOrder(action, qty, orderRef=self.order_ref)
             order.transmit = (i == len(legs) - 1)
             self.ib.placeOrder(contract, order)
         
@@ -1145,6 +1225,10 @@ class SPYMultiStrategyTrader:
     
     def place_strangle(self, expiry, strikes, params):
         """下单Short Strangle"""
+        blocked = self._entry_blocked()
+        if blocked:
+            logger.warning(f"⛔ Strangle 不开新仓: {blocked}")
+            return None
         call_sell = self.get_option_price(expiry, strikes['call_sell'], 'C')
         put_sell = self.get_option_price(expiry, strikes['put_sell'], 'P')
 
@@ -1171,12 +1255,12 @@ class SPYMultiStrategyTrader:
             return None
         
         # 卖出Call
-        call_order = MarketOrder('SELL', contracts)
+        call_order = MarketOrder('SELL', contracts, orderRef=self.order_ref)
         call_order.transmit = False
         self.ib.placeOrder(call_sell['contract'], call_order)
-        
+
         # 卖出Put
-        put_order = MarketOrder('SELL', contracts)
+        put_order = MarketOrder('SELL', contracts, orderRef=self.order_ref)
         put_order.transmit = True
         self.ib.placeOrder(put_sell['contract'], put_order)
         
@@ -1228,6 +1312,10 @@ class SPYMultiStrategyTrader:
 
     def place_directional_spread(self, expiry, strikes, params, is_put_spread):
         """下单方向性Credit Spread"""
+        blocked = self._entry_blocked()
+        if blocked:
+            logger.warning(f"⛔ Credit Spread 不开新仓: {blocked}")
+            return None
         spread_strikes = self.calculate_directional_spread_strikes(
             self.get_spy_price(), strikes, params, is_put_spread, expiry=expiry
         )
@@ -1263,12 +1351,12 @@ class SPYMultiStrategyTrader:
             return None
         
         # 卖出期权
-        sell_order = MarketOrder('SELL', contracts)
+        sell_order = MarketOrder('SELL', contracts, orderRef=self.order_ref)
         sell_order.transmit = False
         self.ib.placeOrder(sell_opt['contract'], sell_order)
-        
+
         # 买入保护期权
-        buy_order = MarketOrder('BUY', contracts)
+        buy_order = MarketOrder('BUY', contracts, orderRef=self.order_ref)
         buy_order.transmit = True
         self.ib.placeOrder(buy_opt['contract'], buy_order)
         
@@ -1297,6 +1385,10 @@ class SPYMultiStrategyTrader:
         - params['target_delta'] < 50  → OTM（turbo 模式，用 delta 找行权价）
         - strategy_enum: 显式指定 Strategy 枚举（steady vs turbo）
         """
+        blocked = self._entry_blocked()
+        if blocked:
+            logger.warning(f"⛔ Long option 不开新仓: {blocked}")
+            return None
         right = 'C' if is_call else 'P'
         target_delta = params.get('target_delta', 50)
 
@@ -1335,7 +1427,7 @@ class SPYMultiStrategyTrader:
             logger.warning("当日风险超过限制")
             return None
 
-        order = MarketOrder('BUY', contracts)
+        order = MarketOrder('BUY', contracts, orderRef=self.order_ref)
         self.ib.placeOrder(opt['contract'], order)
         if strategy_enum is None:
             strategy_enum = (Strategy.DIRECTIONAL_LONG_CALL if is_call
@@ -1427,7 +1519,12 @@ class SPYMultiStrategyTrader:
         一个 exchange='SMART' 的完整 Option/Stock contract 再下单。
         """
         from ib_insync import Option, Stock
-        for pos in self.ib.positions():
+        # Close scope: positions classified own only. Other strategies'
+        # holdings and unclaimed positions are never touched.
+        mine, _others, _unclaimed = reconcile(
+            self.strategy_id, self.ib.positions(),
+            adapt_fills(self.ib.fills()))
+        for pos in mine:
             c = pos.contract
             if 'SPY' not in c.symbol:
                 continue
@@ -1461,7 +1558,7 @@ class SPYMultiStrategyTrader:
                 logger.error(f"无法 qualify 平仓合约: {c.localSymbol}，跳过")
                 continue
 
-            order = MarketOrder(action, qty, tif='DAY')
+            order = MarketOrder(action, qty, tif='DAY', orderRef=self.order_ref)
             self.ib.placeOrder(close_contract, order)
             logger.info(f"平仓 {action} {qty}x {c.localSymbol} via SMART")
 
@@ -1648,8 +1745,6 @@ def build_parser():
     p.add_argument('--port', type=int, default=4002,
                    help='端口。4002=Gateway paper (默认), 7497=TWS paper, '
                         '4001=Gateway 实盘, 7496=TWS 实盘')
-    p.add_argument('--client-id', type=int, default=2,
-                   help='IB client ID。两个模式同时跑时用不同 ID（如 2 和 3）')
     p.add_argument('--live', action='store_true',
                    help='显式开启实盘。必须同时把 --port 改为 4001/7496 才生效。')
     p.add_argument('--mode', choices=['steady', 'turbo'], default='steady',
@@ -1680,10 +1775,10 @@ def main():
     if args.mode == 'turbo':
         logger.warning("⚡⚡⚡ TURBO 模式 —— 高风险，每周翻倍目标，可能爆仓 ⚡⚡⚡")
 
+    # clientId is fixed per mode (steady=2 / turbo=3); not a free argument.
     trader = SPYMultiStrategyTrader(
         host=args.host,
         port=args.port,
-        client_id=args.client_id,
         live=args.live,
         mode=args.mode,
         capital_pct=args.capital_pct,
