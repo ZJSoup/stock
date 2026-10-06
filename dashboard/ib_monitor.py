@@ -152,8 +152,9 @@ class IBMonitor:
         if not account and managed:
             account = managed[0]
 
+        # ib_insync 0.9.86: portfolio() returns the cached list of PortfolioItem
         positions = [self._position_item(item)
-                     for item in self._ib.portfolioItems()]
+                     for item in self._ib.portfolio()]
 
         self._store({
             "connected": True,
