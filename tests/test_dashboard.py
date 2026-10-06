@@ -52,3 +52,13 @@ def test_start_unknown_bot_raises(tmp_path):
     m = make_manager(tmp_path)
     with pytest.raises(ValueError):
         m.start("nope")
+
+
+def test_ib_snapshot_shape_when_disconnected():
+    from dashboard.ib_monitor import IBMonitor
+    mon = IBMonitor(port=49999)  # nothing listening
+    snap = mon.snapshot()
+    assert snap["connected"] is False
+    assert snap["positions"] == []
+    assert "error" in snap
+    # must never raise even with no IB running
