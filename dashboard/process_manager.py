@@ -24,7 +24,7 @@ BOTS: dict[str, dict] = {
         "label": "SPY STEADY",
         "cmd": [
             sys.executable, "spy_multi_strategy.py",
-            "--mode", "steady", "--capital-pct", "100", "--client-id", "2",
+            "--mode", "steady", "--capital-pct", "100",
         ],
         "cwd": str(REPO_ROOT),
         "pattern": r"spy_multi_strategy.py.*--mode[ =]steady",
@@ -33,7 +33,7 @@ BOTS: dict[str, dict] = {
         "label": "SPY TURBO",
         "cmd": [
             sys.executable, "spy_multi_strategy.py",
-            "--mode", "turbo", "--capital-pct", "100", "--client-id", "3",
+            "--mode", "turbo", "--capital-pct", "100",
         ],
         "cwd": str(REPO_ROOT),
         "pattern": r"spy_multi_strategy.py.*--mode[ =]turbo",

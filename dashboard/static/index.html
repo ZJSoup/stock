@@ -322,6 +322,54 @@
   @keyframes fade-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 
   /* ================================================================
+     Risk budget
+     ================================================================ */
+  .budget-grid {
+    display: grid; grid-template-columns: 320px 1fr;
+    gap: var(--space-4);
+  }
+  @media (max-width: 900px) { .budget-grid { grid-template-columns: 1fr; } }
+
+  .budget-account {
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: var(--bg-soft); padding: var(--space-4);
+    display: flex; flex-direction: column; gap: var(--space-3);
+  }
+  .budget-account.halted {
+    border-color: rgba(248,113,113,.5); background: var(--red-soft);
+  }
+  .bar-track {
+    height: 8px; border-radius: 999px; background: var(--panel-raised);
+    overflow: hidden;
+  }
+  .bar-fill {
+    height: 100%; border-radius: 999px;
+    background: var(--green);
+    transition: width .3s ease;
+  }
+  .bar-fill.warn { background: var(--amber); }
+  .bar-fill.over { background: var(--red); }
+  .bar-meta {
+    display: flex; justify-content: space-between; gap: var(--space-2);
+    font-size: 12px; color: var(--muted); margin-top: 6px;
+  }
+  .bar-meta b { color: var(--fg-dim); font-weight: 550; font-family: var(--font-mono); }
+
+  .strategy-bars { display: flex; flex-direction: column; gap: var(--space-3); }
+  .strategy-row {
+    display: grid;
+    grid-template-columns: 130px 1fr 92px;
+    align-items: center; gap: var(--space-3);
+  }
+  @media (max-width: 640px) {
+    .strategy-row { grid-template-columns: 1fr; gap: 4px; }
+  }
+  .strategy-row .s-name {
+    font-size: 12.5px; font-weight: 600; display: flex; align-items: center; gap: 8px;
+  }
+  .strategy-row .s-name .sub { color: var(--muted-2); font-weight: 400; font-size: 11px; }
+
+  /* ================================================================
      Reduced motion
      ================================================================ */
   @media (prefers-reduced-motion: reduce) {
@@ -368,6 +416,49 @@
     </div>
   </section>
 
+  <!-- ============ Panel 1b: Risk Budget ============ -->
+  <section class="panel span-12" aria-labelledby="h-budget">
+    <div class="panel-head">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path><path d="m9 12 2 2 4-4"></path></svg>
+      <h2 id="h-budget">风险预算</h2>
+      <span class="hint">名义敞口 / 账户净值 · 每 5 秒刷新 · Halt 只设标志位，不碰订单</span>
+    </div>
+    <div class="panel-body">
+      <div class="budget-grid">
+        <div class="budget-account" id="budget-account">
+          <div style="display:flex;align-items:center;gap:var(--space-2)">
+            <span id="budget-halt-badge" class="badge ok"><span class="dot"></span>正常</span>
+          </div>
+          <div>
+            <div class="stat-label">账户总敞口</div>
+            <div class="bar-track" role="img" aria-label="账户总敞口占比">
+              <div class="bar-fill" id="account-bar" style="width:0%"></div>
+            </div>
+            <div class="bar-meta">
+              <span><b id="account-used">0.0%</b> 已用</span>
+              <span>上限 <b id="account-max">60%</b></span>
+            </div>
+          </div>
+          <div style="display:flex;gap:var(--space-3);margin-top:auto">
+            <div>
+              <div class="stat-label">净值</div>
+              <div class="num" id="budget-netliq" style="font-size:15px;font-weight:600">—</div>
+            </div>
+            <div>
+              <div class="stat-label">当日盈亏</div>
+              <div class="num" id="budget-dailypnl" style="font-size:15px;font-weight:600">—</div>
+            </div>
+          </div>
+          <button class="btn danger block" id="halt-btn" aria-pressed="false">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="1.5"></rect></svg>
+            <span id="halt-btn-label">Halt：全部停止开新仓</span>
+          </button>
+        </div>
+        <div class="strategy-bars" id="strategy-bars"></div>
+      </div>
+    </div>
+  </section>
+
   <!-- ============ Panel 2: IB ============ -->
   <section class="panel span-7" aria-labelledby="h-ib">
     <div class="panel-head">
@@ -393,6 +484,7 @@
           <thead>
             <tr>
               <th>Symbol</th><th>Expiry</th><th>Strike</th><th>Right</th>
+              <th>归属</th>
               <th class="r">Qty</th><th class="r">Avg Cost</th>
               <th class="r">Mkt Value</th><th class="r">uPnL</th>
             </tr>
@@ -509,6 +601,26 @@ const ICON = {
   stop: '<svg viewBox="0 0 24 24" fill="none"><rect x="5" y="5" width="14" height="14" rx="2" fill="currentColor"></rect></svg>',
 };
 
+/* Ownership: clientId → strategy label (mirrors common/ownership.py) */
+const CLIENT_TO_STRATEGY = {
+  2: "spy-steady", 3: "spy-turbo", 100: "momo",
+};
+const STRATEGY_LABELS = {
+  "spy-steady": "SPY Steady",
+  "spy-turbo": "SPY Turbo",
+  "momo": "MOMO",
+};
+const STRATEGY_BADGE_CLASS = {
+  "spy-steady": "info", "spy-turbo": "warn", "momo": "ok",
+};
+
+const pct1 = (v) => (v * 100).toFixed(1) + "%";
+function barClass(used, max) {
+  if (used >= max) return "over";
+  if (used >= max * 0.8) return "warn";
+  return "";
+}
+
 /* ================================================================
    Panel 1: Bots
    ================================================================ */
@@ -601,9 +713,21 @@ async function refreshIB() {
 
   $("#ib-updated").textContent = s.updated_at ? "更新于 " + s.updated_at.slice(11, 19) : "";
 
+  // Ownership column: conId → clientId from the executions in this snapshot
+  const conidClient = new Map(
+    (s.executions || []).map((e) => [e.con_id, e.client_id]));
+
+  const ownershipCell = (p) => {
+    const sid = CLIENT_TO_STRATEGY[conidClient.get(p.con_id)];
+    if (!sid)
+      return '<span class="badge err"><span class="dot"></span>未认领</span>';
+    return '<span class="badge ' + STRATEGY_BADGE_CLASS[sid] + '">' +
+           esc(STRATEGY_LABELS[sid]) + "</span>";
+  };
+
   const body = $("#ib-positions");
   if (s.positions.length === 0) {
-    body.innerHTML = '<tr><td colspan="8" class="empty">无持仓</td></tr>';
+    body.innerHTML = '<tr><td colspan="9" class="empty">无持仓</td></tr>';
   } else {
     body.innerHTML = s.positions.map((p) =>
       "<tr>" +
@@ -611,6 +735,7 @@ async function refreshIB() {
         "<td>" + (p.expiry ? esc(p.expiry) : "—") + "</td>" +
         "<td>" + (p.strike != null ? p.strike.toLocaleString() : "—") + "</td>" +
         "<td>" + (p.right && p.right !== "?" ? esc(p.right) : "—") + "</td>" +
+        ownershipCell(p) +
         '<td class="num r">' + (p.position != null ? p.position : "—") + "</td>" +
         '<td class="num r">' + fmtMoney(p.avg_cost) + "</td>" +
         '<td class="num r">' + fmtMoney(p.market_value) + "</td>" +
@@ -626,6 +751,95 @@ async function refreshIB() {
       "<span>" + esc(s.error) + "</span></div>";
   } else errBox.innerHTML = "";
 }
+
+/* ================================================================
+   Panel 1b: Risk budget + halt
+   ================================================================ */
+async function refreshBudget() {
+  let snap;
+  try {
+    snap = await api("/api/risk-budget");
+  } catch (e) {
+    return;
+  }
+  const acct = snap.account;
+
+  $("#budget-netliq").textContent = fmtMoney(acct.net_liquidation);
+  const daily = $("#budget-dailypnl");
+  daily.textContent = (acct.daily_pnl >= 0 ? "+" : "") + pct1(acct.daily_pnl);
+  daily.className = "num " + (acct.daily_pnl >= 0 ? "pos" : "neg");
+
+  const bar = $("#account-bar");
+  bar.style.width = Math.min(100, acct.total_used_pct * 100) + "%";
+  bar.className = "bar-fill " + barClass(acct.total_used_pct, acct.total_max_pct);
+  $("#account-used").textContent = pct1(acct.total_used_pct);
+  $("#account-max").textContent = pct1(acct.total_max_pct);
+
+  const badge = $("#budget-halt-badge");
+  const box = $("#budget-account");
+  const btn = $("#halt-btn");
+  if (acct.halt) {
+    badge.className = "badge err";
+    badge.innerHTML = '<span class="dot"></span>Halt 中';
+    box.classList.add("halted");
+    btn.classList.remove("danger");
+    btn.classList.add("primary");
+    $("#halt-btn-label").textContent = "Resume：恢复开新仓";
+    btn.setAttribute("aria-pressed", "true");
+  } else {
+    badge.className = "badge ok";
+    badge.innerHTML = '<span class="dot pulse"></span>正常';
+    box.classList.remove("halted");
+    btn.classList.remove("primary");
+    btn.classList.add("danger");
+    $("#halt-btn-label").textContent = "Halt：全部停止开新仓";
+    btn.setAttribute("aria-pressed", "false");
+  }
+
+  $("#strategy-bars").innerHTML = Object.entries(snap.strategies)
+    .map(([id, s]) => {
+      const widthPct = Math.min(100, s.used_pct * 100).toFixed(1);
+      const fillCls = barClass(s.used_pct, s.max_pct) +
+                      (!s.can_open && s.used_pct < s.max_pct ? " over" : "");
+      const openBadge = s.can_open
+        ? '<span class="badge ok"><span class="dot"></span>可开仓</span>'
+        : '<span class="badge err"><span class="dot"></span>停止开仓</span>';
+      return (
+        '<div class="strategy-row">' +
+          '<div class="s-name">' + esc(STRATEGY_LABELS[id] || id) +
+            '<span class="sub">日亏限 ' + pct1(s.daily_loss_limit_pct) + "</span></div>" +
+          "<div>" +
+            '<div class="bar-track" role="img" aria-label="' + esc(id) + ' 敞口占比">' +
+              '<div class="bar-fill ' + fillCls.trim() + '" style="width:' + widthPct + '%"></div>' +
+            "</div>" +
+            '<div class="bar-meta"><span><b>' + pct1(s.used_pct) + "</b> 已用</span>" +
+              "<span>上限 <b>" + pct1(s.max_pct) + "</b></span></div>" +
+          "</div>" +
+          openBadge +
+        "</div>"
+      );
+    }).join("");
+}
+
+$("#halt-btn").addEventListener("click", async () => {
+  const halting = $("#halt-btn").getAttribute("aria-pressed") !== "true";
+  const msg = halting
+    ? "确认 Halt？所有策略将立即停止开新仓（已有持仓按各自策略规则处理，Dashboard 不会代下单）。"
+    : "确认 Resume？所有策略将恢复开新仓（仍受预算限制）。";
+  if (!window.confirm(msg)) return;
+  $("#halt-btn").disabled = true;
+  try {
+    await api("/api/halt", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ halt: halting }),
+    });
+  } catch (e) {
+    alert("Halt 操作失败: " + e.message);
+  }
+  $("#halt-btn").disabled = false;
+  await refreshBudget();
+});
 
 /* ================================================================
    Panel 3: Logs
@@ -801,7 +1015,7 @@ function tickClock() {
 
 async function refreshAll() {
   tickClock();
-  await Promise.all([refreshBots(), refreshIB(), refreshLogs()]);
+  await Promise.all([refreshBots(), refreshIB(), refreshLogs(), refreshBudget()]);
 }
 
 refreshAll();
