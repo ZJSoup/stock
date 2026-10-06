@@ -56,12 +56,23 @@ def test_exit_sells_marketable_limit():
     assert order.action == "SELL" and order.lmtPrice == round(6.0 * 0.998, 4)
     assert f.price < 6.0
 
-def test_cancel_all():
+def test_cancel_all_scopes_to_symbol():
     ib = ib_mock()
+    ztg_trade = mock.MagicMock()
+    ztg_trade.contract.symbol = "ZTG"
+    other_trade = mock.MagicMock()
+    other_trade.contract.symbol = "AAA"
+    ib.reqAllOpenOrdersAsync = mock.AsyncMock(
+        return_value=[ztg_trade, other_trade])
+    ib.cancelOrder = mock.MagicMock()
     ib.reqGlobalCancel = mock.MagicMock()
     ex = Executor(ib)
-    run(ex.cancel_all(contract))
-    ib.reqGlobalCancel.assert_called_once()
+    ztg = mock.MagicMock(symbol="ZTG")
+    run(ex.cancel_all(ztg))
+    # only the matching symbol's order is cancelled, never the other symbol's
+    ib.cancelOrder.assert_called_once_with(ztg_trade.order)
+    # and never a global cancel, which would kill every instrument's orders
+    ib.reqGlobalCancel.assert_not_called()
 
 def test_replace_stop_cancels_old_stop_only():
     ib = ib_mock()

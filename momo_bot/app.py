@@ -14,9 +14,26 @@ from .execution import Executor
 from .scanner import quote_candidate, run_scan
 from .signals import Bar, Tick
 from .state import Snapshot, load_snapshot, save_snapshot
-from .journal import record_trade, record_violation
+from .journal import record_trade, record_violation, summarize
 
 ET = ZoneInfo("America/New_York")
+
+
+def ensure_live_allowed(settings, data_dir) -> None:
+    """Paper gate for live mode: abort before new scanning unless the paper
+    journal clears the eligibility criteria. Paper mode is always allowed."""
+    if settings.mode != "live":
+        return
+    stats = summarize(data_dir)
+    if not stats["eligible"]:
+        raise RuntimeError(
+            "live mode blocked: paper-gate eligibility not met "
+            f"(trading_days={stats['trading_days']}/20, "
+            f"setups={stats['setups']}/10, net={stats['net']}, "
+            f"win_rate={stats['win_rate']:.2f}/0.60, "
+            f"max_drawdown={stats['max_drawdown']:.2f}/0.15, "
+            f"violations={stats['violations']}/0)"
+        )
 
 
 def classify_tick_side(price: float, bid: float, ask: float) -> str:
@@ -86,8 +103,14 @@ class App:
         # act on a start_equity of 0.
         await self._update_account()
         if self.state.phase == "IN_POSITION":
+            # A restored live position must stay manageable even if the paper
+            # gate would not pass: subscribe and re-attach its stop first.
             await self._subscribe(self.state.symbol)
             await self._ensure_stop()
+        else:
+            # No position to service — abort before any new scanning unless
+            # the paper journal proves live eligibility.
+            ensure_live_allowed(self.settings, self.data_dir)
         await self._loop()
 
     async def _loop(self):
@@ -115,6 +138,11 @@ class App:
             # reducer treats that as "start_equity still unknown" anyway, but
             # skipping keeps the IDLE->SCANNING transition on real data.
             return
+        # CashBalance is the settled-cash proxy: the strategy makes one
+        # round-trip per day and only acts after overnight (T+1) settlement.
+        # Whether the gateway actually exposes a SettledCash tag must be
+        # verified against the real gateway during the paper run before
+        # relying on it instead.
         self._dispatch(eng.Account(
             summary["NetLiquidation"],
             summary.get("CashBalance", summary["NetLiquidation"]),

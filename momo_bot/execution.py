@@ -56,7 +56,11 @@ class Executor:
         return await self._await_fill(trade)
 
     async def cancel_all(self, contract) -> None:
-        self.ib.reqGlobalCancel()
+        # Cancel only THIS symbol's open orders — never reqGlobalCancel,
+        # which would also kill orders on other instruments.
+        for trade in await self.ib.reqAllOpenOrdersAsync():
+            if trade.contract.symbol == contract.symbol:
+                self.ib.cancelOrder(trade.order)
 
     async def execute(self, contract, command):
         from .engine import (
