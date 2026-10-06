@@ -107,3 +107,21 @@ def test_config_rejects_live_port(tmp_path, monkeypatch):
     monkeypatch.setattr(config_editor, "CONFIG_PATH", tmp_path / "config.toml")
     with pytest.raises(ValueError):
         config_editor.write_momo_config({"mode": "paper", "port": 4001})
+
+
+def test_api_bots_and_ib(tmp_path):
+    from fastapi.testclient import TestClient
+    from dashboard.server import create_app
+    from dashboard.process_manager import BotManager
+    from dashboard.ib_monitor import IBMonitor
+    app = create_app(bot_manager=BotManager(state_file=tmp_path/"p.json"),
+                     ib_monitor=IBMonitor(port=49999))
+    c = TestClient(app)
+    r = c.get("/api/bots")
+    assert r.status_code == 200 and "spy-steady" in r.json()
+    r = c.get("/api/ib")
+    assert r.status_code == 200 and r.json()["connected"] is False
+    r = c.post("/api/bots/nope/start")
+    assert r.status_code == 400
+    r = c.get("/api/logs/spy-turbo")
+    assert r.status_code == 200

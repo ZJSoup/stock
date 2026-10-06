@@ -8,6 +8,7 @@ cancel or flatten calls -- monitoring only.
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import threading
 from datetime import datetime
@@ -87,6 +88,10 @@ class IBMonitor:
     # worker thread (owns the IB instance and its event loop)
     # ------------------------------------------------------------------
     def _run(self) -> None:
+        # Python 3.13 no longer auto-creates a loop in non-main threads
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
         while not self._stop.is_set():
             if not self._ib.isConnected():
                 try:
