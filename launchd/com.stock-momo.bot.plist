@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.stock-momo.bot</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/zsh</string>
+        <string>/Users/zijunt/Dev/Projects/stock/launchd/run_momo.sh</string>
+    </array>
+    <!-- 6:55 AM ET weekdays = 3:55 America/Vancouver (PDT). launchd runs in
+         LOCAL time. One dict per weekday: a single dict with one Weekday
+         fires only that one day. Winter: change Hour to 4 when PST/EST. -->
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict><key>Hour</key><integer>3</integer><key>Minute</key><integer>55</integer><key>Weekday</key><integer>1</integer></dict>
+        <dict><key>Hour</key><integer>3</integer><key>Minute</key><integer>55</integer><key>Weekday</key><integer>2</integer></dict>
+        <dict><key>Hour</key><integer>3</integer><key>Minute</key><integer>55</integer><key>Weekday</key><integer>3</integer></dict>
+        <dict><key>Hour</key><integer>3</integer><key>Minute</key><integer>55</integer><key>Weekday</key><integer>4</integer></dict>
+        <dict><key>Hour</key><integer>3</integer><key>Minute</key><integer>55</integer><key>Weekday</key><integer>5</integer></dict>
+    </array>
+    <key>StandardOutPath</key>
+    <string>/Users/zijunt/Library/Logs/stock-momo/launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/zijunt/Library/Logs/stock-momo/launchd.err.log</string>
+</dict>
+</plist>
