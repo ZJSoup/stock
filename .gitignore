@@ -13,3 +13,14 @@ venv/
 
 # Local Claude Code settings
 .claude/settings.local.json
+
+# Secrets / local credentials — real config lives at ~/.config/stock-momo/
+config.toml
+*.secret
+*.secrets
+*.pem
+*.key
+.env
+.env.*
+*credentials*
+*api_key*
