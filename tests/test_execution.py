@@ -107,6 +107,29 @@ def test_cancel_all_scopes_to_symbol():
     # and never a global cancel, which would kill every instrument's orders
     ib.reqGlobalCancel.assert_not_called()
 
+def test_await_fill_waits_on_updateEvent():
+    # ib_insync 0.9.86 waitOnUpdate is a sync bool helper (like sleep);
+    # inside a coroutine the fill loop must await the awaitable updateEvent.
+    ib = ib_mock()
+    ib.waitOnUpdate = mock.MagicMock()  # must not be called
+    ex = Executor(ib)
+    trade = mock.MagicMock()
+    trade.isDone.side_effect = [False, True]
+    trade.filled = 100
+    trade.orderStatus.avgTotalPrice = 6.01
+    trade.order.action = "BUY"
+
+    async def drive():
+        fut = asyncio.Future()
+        fut.set_result(None)
+        ib.updateEvent = fut
+        return await ex._await_fill(trade)
+
+    f = run(drive())
+    assert (f.qty, f.price, f.side) == (100, 6.01, "BUY")
+    ib.waitOnUpdate.assert_not_called()
+
+
 def test_replace_stop_cancels_old_stop_only():
     ib = ib_mock()
     old = mock.MagicMock()

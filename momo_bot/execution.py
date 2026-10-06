@@ -30,7 +30,10 @@ class Executor:
                 status = trade.orderStatus
                 return Fill(int(trade.filled), float(status.avgTotalPrice or 0),
                             trade.order.action)
-            await self.ib.waitOnUpdate()
+            # ib_insync 0.9.86 waitOnUpdate is a synchronous bool helper;
+            # updateEvent is the awaitable version (no timeout — the while
+            # loop above enforces the deadline).
+            await self.ib.updateEvent
         self.ib.cancelOrder(trade.order)
         raise TimeoutError("order did not fill in time")
 

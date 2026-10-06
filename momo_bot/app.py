@@ -131,9 +131,9 @@ class App:
             await self._update_account()
             if self.state.phase == "SCANNING":
                 await self._scan_once()
-            await self.ib.sleep(1)
+            await asyncio.sleep(1)
         # give stop/exits a moment, then stop; launchd hard-kills at 10:10
-        await self.ib.sleep(5)
+        await asyncio.sleep(5)
 
     def _dispatch(self, event):
         self.state, commands = eng.handle(self.state, event)
@@ -143,7 +143,15 @@ class App:
         # Explicit download: the auto-started accountSummary() cache is often
         # empty the first moments after connect (resolves to None/0 values).
         await self.ib.reqAccountSummaryAsync()
-        summary = {i.tag: float(i.value) for i in self.ib.accountSummary()}
+        # accountSummary mixes numeric tags (NetLiquidation, ...) with string
+        # tags (accountType="INDIVIDUAL", currency="BASE") — keep only values
+        # that parse as float rather than float()ing every tag.
+        summary = {}
+        for i in self.ib.accountSummary():
+            try:
+                summary[i.tag] = float(i.value)
+            except ValueError:
+                pass
         if "NetLiquidation" not in summary:
             # No values yet; retry next tick. Never dispatch equity 0 — the
             # reducer treats that as "start_equity still unknown" anyway, but
@@ -301,7 +309,11 @@ class App:
     def _execute_commands(self, commands):
         # Event callbacks run inside the ib event loop's thread: schedule
         # follow-up coroutines on that loop instead of nesting ib.run().
-        loop = self.ib.loop
+        # ib_insync 0.9.86 removed IB.loop — take the running loop directly.
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.get_event_loop()
         for cmd in commands:
             if isinstance(cmd, eng.Subscribe):
                 asyncio.ensure_future(self._subscribe(cmd.symbol), loop=loop)

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from ib_insync import ScannerSubscription, Stock
 
 from .pillars import Candidate, grade_pillars, relative_volume
@@ -8,7 +10,7 @@ from .pillars import Candidate, grade_pillars, relative_volume
 def build_subscription() -> ScannerSubscription:
     sub = ScannerSubscription(
         instrument="STK",
-        locations="STK.US.MAJOR",
+        locationCode="STK.US.MAJOR",
         scanCode="TOP_PERC_GAINERS",
     )
     sub.abovePrice = 2.0
@@ -19,9 +21,9 @@ def build_subscription() -> ScannerSubscription:
 async def run_scan(ib):
     """Ranked contracts from IB; market data for each is fetched separately
     because ScanDataData does not carry change% or volume."""
-    # Signature: reqScannerAsync(subscription, scannerSubscriptionOptions=None,
-    # scannerSubscriptionFilterOptions=None, ...) — there is no `options` kwarg.
-    contracts = await ib.reqScannerAsync(build_subscription(), [], [])
+    # ib_insync 0.9.86 coroutine is reqScannerDataAsync(subscription,
+    # scannerSubscriptionOptions, scannerSubscriptionFilterOptions).
+    contracts = await ib.reqScannerDataAsync(build_subscription(), [], [])
     return [item.contract for item in contracts[:20]]
 
 
@@ -44,9 +46,9 @@ def to_candidate(symbol, con_id, last, prev_close, volume, avg_volume,
 async def quote_candidate(ib, contract, enricher):
     """Snapshot one scanner hit: live quote + 50-day history + float/news.
     reqMktData is synchronous in ib_insync (returns the Ticker immediately);
-    only ib.sleep and the *Async requests are awaited here."""
+    only asyncio.sleep and the *Async requests are awaited here."""
     ticker = ib.reqMktData(contract, "", False, False)
-    await ib.sleep(2)
+    await asyncio.sleep(2)
     # 90 calendar days covers >= 50 completed trading sessions.
     daily = await ib.reqHistoricalDataAsync(
         contract, "", "90 D", "1 day", "TRADES", True, formatDate=1
