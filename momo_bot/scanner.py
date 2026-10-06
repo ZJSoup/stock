@@ -5,6 +5,7 @@ import asyncio
 from ib_insync import ScannerSubscription, Stock
 
 from .pillars import Candidate, grade_pillars, relative_volume
+from .signals import has_black_history
 
 
 def build_subscription() -> ScannerSubscription:
@@ -63,6 +64,10 @@ async def quote_candidate(ib, contract, enricher):
     # Without completed sessions there is no RVOL base and no prev close;
     # without a live last there is no change% to grade. Skip the hit.
     if not window or not last:
+        return None
+    # Ross's "dirty daily" veto: a recent pump-and-dump or heavy distribution
+    # on the daily chart disqualifies the name before the pillars are graded.
+    if has_black_history(window):
         return None
     prev_close = completed[-1].close
     avg_volume = sum(b.volume for b in window) / len(window)

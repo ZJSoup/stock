@@ -158,3 +158,57 @@ def risk_reward(entry: float, stop: float, target: float) -> float:
     if risk <= 0:
         return 0.0
     return abs(target - entry) / risk
+
+
+def _pump_and_dump(bars: list[Bar], pump_pct: float, crash_pct: float) -> bool:
+    """A recent peak that was itself pumped up from a much lower base, and
+    which the latest close has already given back heavily. A name still
+    holding its high is momentum, not a dump."""
+    peak_idx = max(range(len(bars)), key=lambda i: bars[i].high)
+    peak = bars[peak_idx].high
+    if peak <= 0:
+        return False
+    pre_low = min(b.low for b in bars[:peak_idx + 1])
+    run_up = peak / pre_low - 1 if pre_low > 0 else 0.0
+    give_back = 1 - bars[-1].close / peak
+    return run_up >= pump_pct and give_back >= crash_pct
+
+
+def _high_volume_distribution(
+    bars: list[Bar], n: int, vol_mult: float, drop_pct: float
+) -> bool:
+    """`n` consecutive red bars on clearly above-average volume with a
+    meaningful cumulative decline — active distribution, not a quiet drift."""
+    if len(bars) < n:
+        return False
+    tail = bars[-n:]
+    if not all(b.close < b.open for b in tail):
+        return False
+    avg_vol = sum(b.volume for b in bars) / len(bars)
+    tail_vol = sum(b.volume for b in tail) / n
+    drop = 1 - tail[-1].close / tail[0].open
+    return tail_vol >= vol_mult * avg_vol and drop >= drop_pct
+
+
+def has_black_history(
+    bars: list[Bar],
+    lookback: int = 20,
+    pump_pct: float = 0.75,
+    crash_pct: float = 0.50,
+    dist_n: int = 3,
+    vol_mult: float = 1.5,
+    dist_pct: float = 0.20,
+) -> bool:
+    """Daily-history veto (Ross's "dirty daily chart" rejection). True when
+    the recent completed sessions show either a pump-and-dump (a peak pumped
+    up >= `pump_pct` from its base and already given back >= `crash_pct`) or
+    high-volume distribution (`dist_n` heavy red bars, >= `vol_mult` x average
+    volume, down >= `dist_pct`). Tunable for the paper phase; deliberately
+    conservative so clean momentum near highs is never vetoed."""
+    if not bars:
+        return False
+    window = bars[-lookback:]
+    return (
+        _pump_and_dump(window, pump_pct, crash_pct)
+        or _high_volume_distribution(window, dist_n, vol_mult, dist_pct)
+    )
