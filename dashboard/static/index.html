@@ -1,0 +1,813 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stock Bot Dashboard</title>
+<style>
+  /* ================================================================
+     Design tokens — dark OLED, dense dashboard rhythm
+     ================================================================ */
+  :root {
+    --bg:            #020617;
+    --bg-soft:       #0b1120;
+    --panel:         #0f172a;
+    --panel-hover:   #131c31;
+    --panel-raised:  #1e293b;
+    --border:        #1e293b;
+    --border-strong: #334155;
+    --fg:            #f1f5f9;
+    --fg-dim:        #cbd5e1;
+    --muted:         #94a3b8;
+    --muted-2:       #64748b;
+
+    --blue:      #3b82f6;
+    --blue-soft: rgba(59,130,246,.14);
+    --amber:      #f59e0b;
+    --amber-soft: rgba(245,158,11,.14);
+    --green:      #4ade80;
+    --green-soft: rgba(74,222,128,.13);
+    --red:        #f87171;
+    --red-strong: #ef4444;
+    --red-soft:   rgba(248,113,113,.13);
+
+    --radius:    12px;
+    --radius-sm: 8px;
+    --space-1: 4px; --space-2: 8px; --space-3: 12px;
+    --space-4: 16px; --space-5: 20px; --space-6: 24px; --space-8: 32px;
+
+    --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI",
+                 Roboto, system-ui, "Helvetica Neue", sans-serif;
+    --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+    --shadow-panel: 0 1px 2px rgba(0,0,0,.4);
+    --ring: 0 0 0 2px rgba(59,130,246,.55);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+
+  body {
+    background:
+      radial-gradient(1100px 340px at 75% -160px, rgba(59,130,246,.10), transparent 60%),
+      var(--bg);
+    color: var(--fg);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+  }
+
+  .num, td.num, .stat-value {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+
+  button { font-family: inherit; }
+  button:focus-visible, select:focus-visible, input:focus-visible {
+    outline: none; box-shadow: var(--ring); border-color: var(--blue);
+  }
+
+  ::selection { background: rgba(59,130,246,.35); }
+
+  /* ================================================================
+     Header
+     ================================================================ */
+  header.topbar {
+    max-width: 1440px;
+    margin: 0 auto;
+    padding: var(--space-6) var(--space-6) var(--space-4);
+    display: flex; align-items: center; gap: var(--space-4);
+  }
+  .brand { display: flex; align-items: center; gap: var(--space-3); }
+  .brand-mark {
+    width: 34px; height: 34px; border-radius: 9px;
+    display: grid; place-items: center;
+    background: linear-gradient(145deg, #1d4ed8, #1e3a8a);
+    box-shadow: 0 0 18px rgba(59,130,246,.35), inset 0 1px 0 rgba(255,255,255,.15);
+    color: #eaf2ff;
+  }
+  .brand h1 {
+    font-size: 17px; font-weight: 650; margin: 0; letter-spacing: -.01em;
+  }
+  .brand .sub {
+    font-size: 12px; color: var(--muted); margin-top: 1px;
+  }
+  .topbar-meta {
+    margin-left: auto; display: flex; align-items: center; gap: var(--space-4);
+    font-size: 12px; color: var(--muted);
+  }
+  .meta-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--bg-soft);
+  }
+
+  /* ================================================================
+     Layout
+     ================================================================ */
+  main.grid {
+    max-width: 1440px; margin: 0 auto;
+    padding: 0 var(--space-6) var(--space-8);
+    display: grid; grid-template-columns: repeat(12, 1fr);
+    gap: var(--space-4);
+  }
+  .span-12 { grid-column: span 12; }
+  .span-7  { grid-column: span 7; }
+  .span-5  { grid-column: span 5; }
+  @media (max-width: 1024px) {
+    .span-7, .span-5 { grid-column: span 12; }
+  }
+
+  /* ================================================================
+     Panels / cards
+     ================================================================ */
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-panel);
+    overflow: hidden;
+  }
+  .panel-head {
+    display: flex; align-items: center; gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--border);
+  }
+  .panel-head svg { color: var(--muted); flex: none; }
+  .panel-head h2 {
+    font-size: 13px; font-weight: 600; margin: 0;
+    letter-spacing: .02em; color: var(--fg-dim);
+    text-transform: uppercase;
+  }
+  .panel-head .hint { margin-left: auto; font-size: 12px; color: var(--muted-2); }
+  .panel-body { padding: var(--space-4); }
+  .panel-body.tight { padding: 0; }
+
+  /* ================================================================
+     Badges
+     ================================================================ */
+  .badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 12px; font-weight: 500; line-height: 1;
+    padding: 4px 9px; border-radius: 999px;
+    border: 1px solid transparent; white-space: nowrap;
+  }
+  .badge .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
+  .badge.ok    { color: var(--green); background: var(--green-soft); border-color: rgba(74,222,128,.25); }
+  .badge.off   { color: var(--muted); background: rgba(148,163,184,.10); border-color: var(--border-strong); }
+  .badge.info  { color: #93c5fd; background: var(--blue-soft); border-color: rgba(59,130,246,.30); }
+  .badge.warn  { color: #fcd34d; background: var(--amber-soft); border-color: rgba(245,158,11,.30); }
+  .badge.err   { color: var(--red); background: var(--red-soft); border-color: rgba(248,113,113,.30); }
+
+  .dot.pulse { animation: pulse 2s ease-in-out infinite; }
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(74,222,128,.45); }
+    50%      { box-shadow: 0 0 0 5px rgba(74,222,128,0); }
+  }
+
+  .tag {
+    font-size: 11px; font-family: var(--font-mono);
+    color: var(--muted); background: var(--panel-raised);
+    border: 1px solid var(--border); border-radius: 5px;
+    padding: 2px 7px;
+  }
+
+  /* ================================================================
+     Bots
+     ================================================================ */
+  .bot-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-3);
+  }
+  @media (max-width: 900px) { .bot-grid { grid-template-columns: 1fr; } }
+
+  .bot-card {
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: var(--bg-soft); padding: var(--space-4);
+    display: flex; flex-direction: column; gap: var(--space-3);
+    transition: border-color .2s ease, background .2s ease, transform .2s ease;
+  }
+  .bot-card:hover { border-color: var(--border-strong); background: var(--panel-hover); }
+  .bot-card .row1 { display: flex; align-items: center; gap: var(--space-2); }
+  .bot-card .name { font-size: 14px; font-weight: 600; letter-spacing: -.01em; }
+  .bot-card .meta { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+  .bot-card .meta .kv { font-size: 12px; color: var(--muted); display: inline-flex; gap: 5px; }
+  .bot-card .meta .kv b { color: var(--fg-dim); font-weight: 500; font-family: var(--font-mono); }
+  .bot-actions { display: flex; gap: var(--space-2); margin-top: auto; padding-top: 2px; }
+
+  /* ================================================================
+     Buttons
+     ================================================================ */
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    font-size: 13px; font-weight: 550;
+    padding: 7px 14px; border-radius: 7px;
+    border: 1px solid var(--border-strong);
+    background: var(--panel-raised); color: var(--fg-dim);
+    cursor: pointer; user-select: none;
+    transition: background .15s ease, border-color .15s ease,
+                color .15s ease, transform .1s ease, box-shadow .15s ease;
+  }
+  .btn:hover:not(:disabled) { border-color: var(--muted-2); color: var(--fg); background: #263349; }
+  .btn:active:not(:disabled) { transform: translateY(1px); }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .btn svg { width: 13px; height: 13px; }
+
+  .btn.primary { color: #bfdbfe; background: var(--blue-soft); border-color: rgba(59,130,246,.4); }
+  .btn.primary:hover:not(:disabled) { background: rgba(59,130,246,.24); border-color: var(--blue); color: #dbeafe; }
+
+  .btn.danger { color: #fecaca; background: var(--red-soft); border-color: rgba(248,113,113,.4); }
+  .btn.danger:hover:not(:disabled) { background: rgba(248,113,113,.24); border-color: var(--red); color: #fee2e2; }
+
+  .btn.block { width: 100%; }
+
+  /* ================================================================
+     IB stats + table
+     ================================================================ */
+  .stats {
+    display: grid; grid-template-columns: repeat(2, 1fr);
+    gap: var(--space-2) var(--space-3);
+    margin-bottom: var(--space-4);
+  }
+  .stat {
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: var(--bg-soft); padding: var(--space-3) var(--space-4);
+  }
+  .stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .stat-value { font-size: 18px; font-weight: 600; margin-top: 3px; letter-spacing: -.01em; }
+  .pos { color: var(--green); }
+  .neg { color: var(--red); }
+
+  .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  thead th {
+    text-align: left; font-weight: 550; font-size: 11px;
+    text-transform: uppercase; letter-spacing: .04em;
+    color: var(--muted); background: var(--bg-soft);
+    padding: 8px 10px; white-space: nowrap;
+    position: sticky; top: 0;
+  }
+  tbody td { padding: 8px 10px; border-top: 1px solid var(--border); white-space: nowrap; }
+  tbody tr { transition: background .12s ease; }
+  tbody tr:hover { background: var(--panel-hover); }
+  td.r, th.r { text-align: right; }
+  .sym { font-weight: 600; }
+  .sectype { color: var(--muted-2); font-size: 11px; margin-left: 5px; }
+  .empty {
+    padding: var(--space-6); text-align: center; color: var(--muted-2); font-size: 13px;
+  }
+  .error-text {
+    margin-top: var(--space-3); font-size: 12.5px; color: var(--red);
+    background: var(--red-soft); border: 1px solid rgba(248,113,113,.28);
+    border-radius: var(--radius-sm); padding: var(--space-2) var(--space-3);
+    display: flex; gap: 8px; align-items: flex-start;
+  }
+  .error-text svg { flex: none; margin-top: 2px; }
+
+  /* ================================================================
+     Logs
+     ================================================================ */
+  .log-controls { display: flex; gap: var(--space-2); align-items: center; }
+  select, input[type=text], input[type=number] {
+    background: var(--bg-soft); color: var(--fg-dim);
+    border: 1px solid var(--border-strong); border-radius: 7px;
+    padding: 7px 10px; font-size: 13px; font-family: inherit;
+    transition: border-color .15s ease, box-shadow .15s ease;
+  }
+  select:hover, input[type=text]:hover, input[type=number]:hover { border-color: var(--muted-2); }
+
+  pre.log {
+    margin: 0; height: 340px; overflow: auto;
+    padding: var(--space-3) var(--space-4);
+    font-family: var(--font-mono); font-size: 12px; line-height: 1.55;
+    color: var(--fg-dim); background: #070d1a;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  pre.log::-webkit-scrollbar, .table-wrap::-webkit-scrollbar { width: 10px; height: 10px; }
+  pre.log::-webkit-scrollbar-thumb, .table-wrap::-webkit-scrollbar-thumb {
+    background: var(--border-strong); border-radius: 6px;
+    border: 2px solid #070d1a;
+  }
+  pre.log::-webkit-scrollbar-track, .table-wrap::-webkit-scrollbar-track { background: transparent; }
+
+  /* ================================================================
+     Config form
+     ================================================================ */
+  fieldset.grp {
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: var(--bg-soft);
+    padding: var(--space-3) var(--space-4) var(--space-4);
+    margin: 0 0 var(--space-3);
+  }
+  legend {
+    font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .05em; color: var(--muted); padding: 0 6px;
+  }
+  .fields { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--space-2) var(--space-3); }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field.full { grid-column: span 2; }
+  .field label { font-size: 12px; color: var(--muted); }
+  .field input, .field select { width: 100%; }
+  .field .unit-hint { font-size: 11px; color: var(--muted-2); }
+
+  .banner {
+    display: none; align-items: center; gap: 8px;
+    font-size: 13px; border-radius: var(--radius-sm);
+    padding: var(--space-2) var(--space-3); margin-bottom: var(--space-3);
+  }
+  .banner.show { display: flex; animation: fade-in .2s ease; }
+  .banner.ok  { color: var(--green); background: var(--green-soft); border: 1px solid rgba(74,222,128,.28); }
+  .banner.err { color: var(--red); background: var(--red-soft); border: 1px solid rgba(248,113,113,.28); }
+  @keyframes fade-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+
+  /* ================================================================
+     Reduced motion
+     ================================================================ */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-mark" aria-hidden="true">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="3 17 9 11 13 15 21 7"></polyline><polyline points="15 7 21 7 21 13"></polyline>
+      </svg>
+    </div>
+    <div>
+      <h1>Stock Bot Dashboard</h1>
+      <div class="sub">本地只读监控 · 127.0.0.1:8765</div>
+    </div>
+  </div>
+  <div class="topbar-meta">
+    <span class="meta-pill" id="meta-bots">
+      <span class="dot" style="background:var(--muted-2)"></span><span id="meta-bots-txt">—</span>
+    </span>
+    <span class="meta-pill" id="meta-ib">
+      <span class="dot" style="background:var(--muted-2)"></span><span id="meta-ib-txt">IB —</span>
+    </span>
+    <span class="meta-pill">更新于 <span id="meta-time" class="num">—</span></span>
+  </div>
+</header>
+
+<main class="grid">
+
+  <!-- ============ Panel 1: Bots ============ -->
+  <section class="panel span-12" aria-labelledby="h-bots">
+    <div class="panel-head">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"></rect><rect x="9" y="9" width="6" height="6"></rect><path d="M9 2v2M15 2v2M9 20v2M15 20v2M2 9h2M2 15h2M20 9h2M20 15h2"></path></svg>
+      <h2 id="h-bots">Bots 进程</h2>
+      <span class="hint">Dashboard 启动的进程会随 Dashboard 一起关闭</span>
+    </div>
+    <div class="panel-body">
+      <div class="bot-grid" id="bot-grid"></div>
+    </div>
+  </section>
+
+  <!-- ============ Panel 2: IB ============ -->
+  <section class="panel span-7" aria-labelledby="h-ib">
+    <div class="panel-head">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"></path><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"></path><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"></path></svg>
+      <h2 id="h-ib">IB 账户</h2>
+      <span class="hint" id="ib-updated"></span>
+    </div>
+    <div class="panel-body">
+      <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-4)">
+        <span id="ib-conn" class="badge off"><span class="dot"></span>未连接</span>
+        <span class="tag" id="ib-account" style="display:none"></span>
+      </div>
+
+      <div class="stats">
+        <div class="stat"><div class="stat-label">Net Liquidation</div><div class="stat-value num" id="ib-netliq">—</div></div>
+        <div class="stat"><div class="stat-label">Available Funds</div><div class="stat-value num" id="ib-funds">—</div></div>
+        <div class="stat"><div class="stat-label">浮动盈亏</div><div class="stat-value num" id="ib-upnl">—</div></div>
+        <div class="stat"><div class="stat-label">已实现盈亏</div><div class="stat-value num" id="ib-rpnl">—</div></div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Symbol</th><th>Expiry</th><th>Strike</th><th>Right</th>
+              <th class="r">Qty</th><th class="r">Avg Cost</th>
+              <th class="r">Mkt Value</th><th class="r">uPnL</th>
+            </tr>
+          </thead>
+          <tbody id="ib-positions"></tbody>
+        </table>
+      </div>
+      <div id="ib-error"></div>
+    </div>
+  </section>
+
+  <!-- ============ Panel 4: Momo Config ============ -->
+  <section class="panel span-5" aria-labelledby="h-cfg">
+    <div class="panel-head">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></svg>
+      <h2 id="h-cfg">Momo 配置</h2>
+      <span class="hint">~/.config/stock-momo/config.toml</span>
+    </div>
+    <div class="panel-body">
+      <div id="cfg-banner" class="banner" role="status"></div>
+      <form id="cfg-form" novalidate>
+        <fieldset class="grp">
+          <legend>连接</legend>
+          <div class="fields">
+            <div class="field full"><label for="f-host">Host</label><input id="f-host" type="text" name="host" required></div>
+            <div class="field"><label for="f-port">Port</label>
+              <select id="f-port" name="port">
+                <option value="4002">4002 · paper gateway</option>
+                <option value="7497">7497 · paper TWS</option>
+              </select>
+            </div>
+            <div class="field"><label for="f-client_id">Client ID</label><input id="f-client_id" type="number" name="client_id" step="1"></div>
+            <div class="field full"><label for="f-mode">Mode</label>
+              <select id="f-mode" name="mode">
+                <option value="paper">paper</option>
+                <option value="live">live</option>
+              </select>
+            </div>
+          </div>
+        </fieldset>
+
+        <fieldset class="grp">
+          <legend>Risk</legend>
+          <div class="fields" data-section="risk"></div>
+        </fieldset>
+
+        <fieldset class="grp">
+          <legend>Window</legend>
+          <div class="fields" data-section="window"></div>
+        </fieldset>
+
+        <fieldset class="grp">
+          <legend>Signals</legend>
+          <div class="fields" data-section="signals"></div>
+        </fieldset>
+
+        <button type="submit" class="btn primary block">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+          保存配置
+        </button>
+      </form>
+    </div>
+  </section>
+
+  <!-- ============ Panel 3: Logs ============ -->
+  <section class="panel span-12" aria-labelledby="h-logs">
+    <div class="panel-head">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="8" y1="13" x2="16" y2="13"></line><line x1="8" y1="17" x2="13" y2="17"></line></svg>
+      <h2 id="h-logs">日志</h2>
+      <div class="hint log-controls">
+        <select id="log-name" aria-label="日志来源">
+          <option value="spy-steady">spy-steady</option>
+          <option value="spy-turbo">spy-turbo</option>
+          <option value="momo">momo</option>
+          <option value="spy-trader">spy-trader</option>
+        </select>
+        <select id="log-lines" aria-label="行数">
+          <option value="100">100 行</option>
+          <option value="200" selected>200 行</option>
+          <option value="500">500 行</option>
+        </select>
+      </div>
+    </div>
+    <pre class="log tight" id="log-pre" tabindex="0" aria-label="日志输出">（暂无日志）</pre>
+  </section>
+
+</main>
+
+<script>
+"use strict";
+
+/* ================================================================
+   Small helpers
+   ================================================================ */
+const $ = (sel) => document.querySelector(sel);
+
+async function api(path, opts) {
+  const res = await fetch(path, opts);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || ("HTTP " + res.status));
+  return data;
+}
+
+const fmtMoney = (v) => (v == null ? "—" :
+  v.toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2 }));
+const fmtSigned = (v) => (v == null ? "—" :
+  (v >= 0 ? "+" : "") + v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+const signedClass = (v) => (v == null ? "" : v >= 0 ? "pos" : "neg");
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+const ICON = {
+  play: '<svg viewBox="0 0 24 24" fill="currentColor"><polygon points="6 3 20 12 6 21 6 3"></polygon></svg>',
+  stop: '<svg viewBox="0 0 24 24" fill="none"><rect x="5" y="5" width="14" height="14" rx="2" fill="currentColor"></rect></svg>',
+};
+
+/* ================================================================
+   Panel 1: Bots
+   ================================================================ */
+async function refreshBots() {
+  let bots;
+  try {
+    bots = await api("/api/bots");
+  } catch (e) {
+    $("#meta-bots-txt").textContent = "获取失败";
+    return;
+  }
+
+  const grid = $("#bot-grid");
+  const runningIds = Object.values(bots).filter((b) => b.running);
+  $("#meta-bots-txt").textContent =
+    runningIds.length + " / " + Object.keys(bots).length + " 运行";
+
+  grid.innerHTML = "";
+  for (const [id, b] of Object.entries(bots)) {
+    const managed = b.managed_by === "dashboard";
+    const card = document.createElement("div");
+    card.className = "bot-card";
+    card.innerHTML =
+      '<div class="row1">' +
+        '<span class="name">' + esc(b.label) + "</span>" +
+        (b.running
+          ? '<span class="badge ok"><span class="dot pulse"></span>运行中</span>'
+          : '<span class="badge off"><span class="dot"></span>已停止</span>') +
+      "</div>" +
+      '<div class="meta">' +
+        '<span class="kv">PID <b>' + (b.pid ?? "—") + "</b></span>" +
+        '<span class="kv">管理 <b>' + (b.managed_by ?? "—") + "</b></span>" +
+      "</div>" +
+      '<div class="bot-actions">' +
+        '<button class="btn primary" data-act="start" ' + (b.running ? "disabled" : "") + ">" + ICON.play + "Start</button>" +
+        '<button class="btn danger" data-act="stop" ' + (!b.running || !managed ? "disabled" : "") + ">" + ICON.stop + "Stop</button>" +
+      "</div>";
+
+    card.querySelectorAll("button").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        if (btn.disabled) return;
+        card.querySelectorAll("button").forEach((x) => (x.disabled = true));
+        try {
+          await api("/api/bots/" + encodeURIComponent(id) + "/" + btn.dataset.act, { method: "POST" });
+        } catch (e) {
+          alert(b.label + " " + btn.dataset.act + " 失败: " + e.message);
+        }
+        await refreshBots();
+      });
+    });
+    grid.appendChild(card);
+  }
+}
+
+/* ================================================================
+   Panel 2: IB
+   ================================================================ */
+async function refreshIB() {
+  let s;
+  try {
+    s = await api("/api/ib");
+  } catch (e) {
+    $("#meta-ib-txt").textContent = "IB 获取失败";
+    return;
+  }
+
+  const conn = $("#ib-conn");
+  if (s.connected) {
+    conn.className = "badge ok";
+    conn.innerHTML = '<span class="dot pulse"></span>已连接';
+  } else {
+    conn.className = "badge off";
+    conn.innerHTML = '<span class="dot"></span>未连接';
+  }
+  $("#meta-ib-txt").textContent = s.connected ? "IB 已连接" : "IB 未连接";
+  document.querySelector("#meta-ib .dot").style.background = s.connected ? "var(--green)" : "var(--muted-2)";
+
+  const acct = $("#ib-account");
+  if (s.account) { acct.style.display = ""; acct.textContent = s.account; }
+  else acct.style.display = "none";
+
+  $("#ib-netliq").textContent = fmtMoney(s.net_liquidation);
+  $("#ib-funds").textContent = fmtMoney(s.available_funds);
+
+  const upnl = $("#ib-upnl"), rpnl = $("#ib-rpnl");
+  upnl.textContent = fmtSigned(s.unrealized_pnl);
+  upnl.className = "stat-value num " + signedClass(s.unrealized_pnl);
+  rpnl.textContent = fmtSigned(s.realized_pnl);
+  rpnl.className = "stat-value num " + signedClass(s.realized_pnl);
+
+  $("#ib-updated").textContent = s.updated_at ? "更新于 " + s.updated_at.slice(11, 19) : "";
+
+  const body = $("#ib-positions");
+  if (s.positions.length === 0) {
+    body.innerHTML = '<tr><td colspan="8" class="empty">无持仓</td></tr>';
+  } else {
+    body.innerHTML = s.positions.map((p) =>
+      "<tr>" +
+        '<td><span class="sym">' + esc(p.symbol) + '</span><span class="sectype">' + esc(p.sec_type) + "</span></td>" +
+        "<td>" + (p.expiry ? esc(p.expiry) : "—") + "</td>" +
+        "<td>" + (p.strike != null ? p.strike.toLocaleString() : "—") + "</td>" +
+        "<td>" + (p.right && p.right !== "?" ? esc(p.right) : "—") + "</td>" +
+        '<td class="num r">' + (p.position != null ? p.position : "—") + "</td>" +
+        '<td class="num r">' + fmtMoney(p.avg_cost) + "</td>" +
+        '<td class="num r">' + fmtMoney(p.market_value) + "</td>" +
+        '<td class="num r ' + signedClass(p.unrealized_pnl) + '">' + fmtSigned(p.unrealized_pnl) + "</td>" +
+      "</tr>").join("");
+  }
+
+  const errBox = $("#ib-error");
+  if (!s.connected && s.error) {
+    errBox.innerHTML =
+      '<div class="error-text" role="alert">' +
+      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>' +
+      "<span>" + esc(s.error) + "</span></div>";
+  } else errBox.innerHTML = "";
+}
+
+/* ================================================================
+   Panel 3: Logs
+   ================================================================ */
+let logStickBottom = true;
+const logPre = $("#log-pre");
+logPre.addEventListener("scroll", () => {
+  logStickBottom = logPre.scrollHeight - logPre.scrollTop - logPre.clientHeight < 24;
+});
+
+async function refreshLogs() {
+  const name = $("#log-name").value;
+  const lines = $("#log-lines").value;
+  try {
+    const out = await api("/api/logs/" + encodeURIComponent(name) + "?lines=" + lines);
+    const stick = logStickBottom;
+    logPre.textContent = out.lines.length ? out.lines.join("\n") : "（暂无日志）";
+    if (stick) logPre.scrollTop = logPre.scrollHeight;
+  } catch (e) {
+    logPre.textContent = "日志读取失败: " + e.message;
+  }
+}
+$("#log-name").addEventListener("change", refreshLogs);
+$("#log-lines").addEventListener("change", refreshLogs);
+
+/* ================================================================
+   Panel 4: Momo config
+   ================================================================ */
+const FIELD_SPECS = {
+  risk: {
+    risk_pct:       { step: "0.01", hint: "0.00–1.00" },
+    daily_loss_pct: { step: "0.01", hint: "0.00–1.00" },
+    giveback_pct:   { step: "0.01", hint: "0.00–1.00" },
+  },
+  window: {
+    start: { step: null, hint: "HH:MM" },
+    end:   { step: null, hint: "HH:MM" },
+  },
+  signals: {
+    impulse_lookback:  { step: "1", int: true },
+    impulse_min_pct:   { step: "0.01" },
+    retrace_min:       { step: "0.01" },
+    retrace_max:       { step: "0.01" },
+    basing_low_tol:    { step: "0.001" },
+    sell_pressure_pct: { step: "0.01" },
+    divergence_bars:   { step: "1", int: true },
+    divergence_decline:{ step: "0.01" },
+    entry_rr:          { step: "0.1" },
+  },
+};
+
+const CONFIG_DEFAULTS = {
+  host: "127.0.0.1", port: 4002, client_id: 100, mode: "paper",
+  risk:  { risk_pct: 0.10, daily_loss_pct: 0.15, giveback_pct: 0.50 },
+  window:{ start: "07:00", end: "10:00" },
+  signals: {
+    impulse_lookback: 5, impulse_min_pct: 0.15, retrace_min: 0.25, retrace_max: 0.70,
+    basing_low_tol: 0.003, sell_pressure_pct: 0.65, divergence_bars: 3,
+    divergence_decline: 0.30, entry_rr: 1.0,
+  },
+};
+
+function buildSectionFields(section, values) {
+  const wrap = document.querySelector('.fields[data-section="' + section + '"]');
+  wrap.innerHTML = "";
+  const specs = FIELD_SPECS[section];
+  for (const key of Object.keys(specs)) {
+    const spec = specs[key];
+    const div = document.createElement("div");
+    div.className = "field";
+    const id = "f-" + section + "-" + key;
+    div.innerHTML =
+      '<label for="' + id + '">' + key + "</label>" +
+      '<input id="' + id + '" type="number" name="' + key + '" step="' + (spec.step || "any") + '"' +
+      (spec.int ? ' inputmode="numeric"' : "") + " value=" + (values[key] ?? "") + ">" +
+      (spec.hint ? '<span class="unit-hint">' + spec.hint + "</span>" : "");
+    wrap.appendChild(div);
+  }
+}
+
+async function loadConfig() {
+  let cfg;
+  try {
+    cfg = await api("/api/config/momo");
+  } catch (e) {
+    showBanner("err", "配置读取失败: " + e.message);
+    cfg = {};
+  }
+  // config file missing -> seed defaults so it can be created
+  const data = cfg.exists ? cfg : { ...CONFIG_DEFAULTS, ...cfg };
+
+  $("#f-host").value = data.host ?? CONFIG_DEFAULTS.host;
+  $("#f-port").value = String(data.port ?? 4002);
+  $("#f-client_id").value = data.client_id ?? 100;
+  $("#f-mode").value = data.mode ?? "paper";
+
+  for (const section of ["risk", "window", "signals"]) {
+    buildSectionFields(section, data[section] || CONFIG_DEFAULTS[section]);
+  }
+
+  if (!cfg.exists) {
+    showBanner("err", "配置文件尚不存在，保存将创建新文件（已预填默认值）");
+  }
+}
+
+function collectConfig() {
+  const num = (el, int) => {
+    const v = el.value.trim();
+    if (v === "") return undefined;
+    const n = Number(v);
+    if (!Number.isFinite(n)) throw new Error(el.name + " 必须是数字");
+    return int ? Math.trunc(n) : n;
+  };
+
+  const data = {
+    host: $("#f-host").value.trim(),
+    port: Number($("#f-port").value),
+    client_id: num($("#f-client_id"), true),
+    mode: $("#f-mode").value,
+  };
+  if (!data.host) throw new Error("host 不能为空");
+
+  for (const section of ["risk", "window", "signals"]) {
+    data[section] = {};
+    for (const key of Object.keys(FIELD_SPECS[section])) {
+      const el = document.getElementById("f-" + section + "-" + key);
+      const v = num(el, !!FIELD_SPECS[section][key].int);
+      if (v !== undefined) data[section][key] = v;
+    }
+  }
+  return data;
+}
+
+function showBanner(kind, msg) {
+  const b = $("#cfg-banner");
+  b.className = "banner show " + kind;
+  b.textContent = msg;
+  if (kind === "ok") setTimeout(() => b.classList.remove("show"), 4000);
+}
+
+$("#cfg-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  let body;
+  try {
+    body = collectConfig();
+  } catch (e) {
+    showBanner("err", e.message);
+    return;
+  }
+  try {
+    await api("/api/config/momo", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    showBanner("ok", "配置已保存（旧文件备份为 .bak）");
+  } catch (e) {
+    showBanner("err", "保存失败: " + e.message);
+  }
+});
+
+/* ================================================================
+   Auto-refresh every 5s. Config panel is NOT auto-refreshed so
+   in-progress edits are never clobbered.
+   ================================================================ */
+function tickClock() {
+  const d = new Date();
+  $("#meta-time").textContent =
+    String(d.getHours()).padStart(2, "0") + ":" +
+    String(d.getMinutes()).padStart(2, "0") + ":" +
+    String(d.getSeconds()).padStart(2, "0");
+}
+
+async function refreshAll() {
+  tickClock();
+  await Promise.all([refreshBots(), refreshIB(), refreshLogs()]);
+}
+
+refreshAll();
+loadConfig();
+setInterval(refreshAll, 5000);
+setInterval(tickClock, 1000);
+</script>
+</body>
+</html>
