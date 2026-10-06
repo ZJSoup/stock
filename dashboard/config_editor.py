@@ -43,6 +43,71 @@ _SECTION_TYPES: dict[str, dict[str, str]] = {
 PAPER_PORTS = {4002, 7497}
 LIVE_PORTS = {4001, 7496}
 
+RISK_BUDGET_PATH = (
+    pathlib.Path.home() / ".config" / "stock-dashboard" / "risk_budget.toml")
+
+
+# ----------------------------------------------------------------------
+# risk budget config (separate file, tolerant read)
+# ----------------------------------------------------------------------
+def read_risk_budget_config() -> dict:
+    if not RISK_BUDGET_PATH.exists():
+        return {}
+    try:
+        with open(RISK_BUDGET_PATH, "rb") as fh:
+            data = tomllib.load(fh)
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _check_ratio(value, label: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{label} must be numeric")
+    value = float(value)
+    if not 0.0 < value <= 1.0:
+        raise ValueError(f"{label} must be in (0, 1]")
+    return value
+
+
+def write_risk_budget_config(data: dict) -> dict:
+    if not isinstance(data, dict):
+        raise ValueError("config body must be an object")
+    section = data.get("risk_budget")
+    if not isinstance(section, dict):
+        raise ValueError("config body must contain a [risk_budget] section")
+
+    lines = ["[risk_budget]"]
+    if section.get("total_max") is not None:
+        lines.append(f"total_max = {_check_ratio(section['total_max'], 'total_max')!r}")
+    if section.get("account_daily_loss") is not None:
+        lines.append(
+            f"account_daily_loss = {_check_ratio(section['account_daily_loss'], 'account_daily_loss')!r}")
+
+    entries = section.get("strategies")
+    if entries is not None:
+        if not isinstance(entries, list):
+            raise ValueError("risk_budget.strategies must be an array")
+        for entry in entries:
+            if not isinstance(entry, dict) or not isinstance(entry.get("id"), str):
+                raise ValueError("each strategy needs a string id")
+            lines.append("")
+            lines.append("[[risk_budget.strategies]]")
+            lines.append(f'id = "{entry["id"]}"')
+            if entry.get("max_notional_pct") is not None:
+                lines.append(
+                    f"max_notional_pct = {_check_ratio(entry['max_notional_pct'], 'max_notional_pct')!r}")
+            if entry.get("daily_loss_pct") is not None:
+                lines.append(
+                    f"daily_loss_pct = {_check_ratio(entry['daily_loss_pct'], 'daily_loss_pct')!r}")
+
+    RISK_BUDGET_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = RISK_BUDGET_PATH.with_suffix(".toml.tmp")
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines) + "\n")
+    tmp.replace(RISK_BUDGET_PATH)
+    return read_risk_budget_config()
+
 
 # ----------------------------------------------------------------------
 # read

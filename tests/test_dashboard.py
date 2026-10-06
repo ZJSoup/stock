@@ -109,6 +109,89 @@ def test_config_rejects_live_port(tmp_path, monkeypatch):
         config_editor.write_momo_config({"mode": "paper", "port": 4001})
 
 
+class _FakeMonitor:
+    def __init__(self, snap):
+        self._snap = snap
+
+    def snapshot(self):
+        import copy
+        return copy.deepcopy(self._snap)
+
+
+def _steady_snapshot():
+    return {
+        "connected": True,
+        "net_liquidation": 905258.6,
+        "unrealized_pnl": 0.0,
+        "realized_pnl": 0.0,
+        "positions": [{
+            "con_id": 927852425,
+            "symbol": "SPY",
+            "sec_type": "OPT",
+            "position": 256.0,
+            "market_price": 0.99,
+            "avg_cost": 0.0,
+            "multiplier": 100,
+            "unrealized_pnl": 0.0,
+        }],
+        "executions": [{"con_id": 927852425, "client_id": 2}],
+    }
+
+
+def _make_service(snap, get_config=None):
+    from dashboard.risk_budget import RiskBudgetService
+    return RiskBudgetService(_FakeMonitor(snap),
+                             get_config or (lambda: {}),
+                             lambda data: data)
+
+
+def test_risk_budget_spy_steady_holding_counted():
+    s = _make_service(_steady_snapshot()).snapshot()
+    assert s["strategies"]["spy-steady"]["used_pct"] == pytest.approx(0.028, abs=0.001)
+    assert s["strategies"]["spy-steady"]["can_open"] is True
+    assert s["strategies"]["momo"]["used_pct"] == 0.0
+    assert s["account"]["total_max_pct"] == 0.60
+
+
+def test_risk_budget_halt_blocks_all():
+    svc = _make_service(_steady_snapshot())
+    svc.set_halt(True)
+    s = svc.snapshot()
+    assert s["account"]["halt"] is True
+    assert all(not v["can_open"] for v in s["strategies"].values())
+
+
+def test_risk_budget_unreachable_config_uses_defaults():
+    s = _make_service(_steady_snapshot(), get_config=lambda: {}).snapshot()
+    assert s["account"]["total_max_pct"] == 0.60
+    assert s["strategies"]["spy-steady"]["max_pct"] == 0.30
+    assert s["strategies"]["momo"]["daily_loss_limit_pct"] == 0.02
+
+
+def test_risk_budget_endpoints(tmp_path):
+    from fastapi.testclient import TestClient
+    from dashboard.server import create_app
+    from dashboard.process_manager import BotManager
+    svc = _make_service(_steady_snapshot())
+    app = create_app(bot_manager=BotManager(state_file=tmp_path/"p.json"),
+                     ib_monitor=_FakeMonitor(_steady_snapshot()),
+                     risk_service=svc)
+    c = TestClient(app)
+    r = c.get("/api/risk-budget")
+    assert r.status_code == 200
+    assert r.json()["strategies"]["spy-steady"]["used_pct"] == pytest.approx(0.028, abs=0.001)
+    r = c.post("/api/halt", json={"halt": True})
+    assert r.status_code == 200 and r.json()["account"]["halt"] is True
+    assert all(not v["can_open"] for v in r.json()["strategies"].values())
+    r = c.post("/api/halt", json={"halt": False})
+    assert r.json()["account"]["halt"] is False
+
+
+def test_ib_snapshot_includes_executions_when_disconnected():
+    from dashboard.ib_monitor import IBMonitor
+    assert IBMonitor(port=49999).snapshot()["executions"] == []
+
+
 def test_api_bots_and_ib(tmp_path):
     from fastapi.testclient import TestClient
     from dashboard.server import create_app

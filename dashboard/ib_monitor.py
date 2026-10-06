@@ -35,6 +35,7 @@ def _initial_snapshot() -> dict:
         "unrealized_pnl": None,
         "realized_pnl": None,
         "positions": [],
+        "executions": [],
         "updated_at": None,
         "error": None,
     }
@@ -156,6 +157,17 @@ class IBMonitor:
         positions = [self._position_item(item)
                      for item in self._ib.portfolio()]
 
+        # Execution objects (ib.executions()) lack conId; fills carry both
+        # the contract and the execution → conId↔clientId pairs from fills.
+        exec_pairs = {
+            (fill.contract.conId, fill.execution.clientId)
+            for fill in self._ib.fills()
+        }
+        executions = [
+            {"con_id": con_id, "client_id": client_id}
+            for con_id, client_id in sorted(exec_pairs)
+        ]
+
         self._store({
             "connected": True,
             "account": account,
@@ -164,6 +176,7 @@ class IBMonitor:
             "unrealized_pnl": tags.get("UnrealizedPnL"),
             "realized_pnl": tags.get("RealizedPnL"),
             "positions": positions,
+            "executions": executions,
             "updated_at": _now_iso(),
             "error": None,
         })
@@ -181,14 +194,21 @@ class IBMonitor:
         expiry = contract.lastTradeDateOrContractMonth or None
         strike = _num(contract.strike)
         right = contract.right or None
+        try:
+            multiplier = int(float(contract.multiplier)) if contract.multiplier else 1
+        except (TypeError, ValueError):
+            multiplier = 1
         return {
+            "con_id": contract.conId,
             "symbol": contract.symbol,
             "sec_type": contract.secType,
             "expiry": expiry,
             "strike": strike,
             "right": right,
+            "multiplier": multiplier,
             "position": float(item.position),
             "avg_cost": _num(item.averageCost) or 0.0,
+            "market_price": _num(item.marketPrice),
             "market_value": _num(item.marketValue),
             "unrealized_pnl": _num(item.unrealizedPNL),
         }

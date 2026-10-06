@@ -14,10 +14,13 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 
-from dashboard.config_editor import read_momo_config, write_momo_config
+from dashboard.config_editor import (
+    read_momo_config, read_risk_budget_config, write_momo_config,
+    write_risk_budget_config)
 from dashboard.ib_monitor import IBMonitor
 from dashboard.logs import tail_log
 from dashboard.process_manager import BotManager
+from dashboard.risk_budget import RiskBudgetService
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 INDEX_HTML = STATIC_DIR / "index.html"
@@ -27,9 +30,12 @@ PORT = 8765
 
 
 def create_app(bot_manager: BotManager | None = None,
-               ib_monitor: IBMonitor | None = None) -> FastAPI:
+               ib_monitor: IBMonitor | None = None,
+               risk_service: RiskBudgetService | None = None) -> FastAPI:
     bot_manager = bot_manager or BotManager()
     ib_monitor = ib_monitor or IBMonitor()
+    risk_service = risk_service or RiskBudgetService(
+        ib_monitor, read_risk_budget_config, write_risk_budget_config)
 
     app = FastAPI(title="Stock Bot Dashboard", docs_url=None, redoc_url=None)
 
@@ -62,6 +68,17 @@ def create_app(bot_manager: BotManager | None = None,
     def get_ib():
         return ib_monitor.snapshot()
 
+    @app.get("/api/risk-budget")
+    def get_risk_budget():
+        return risk_service.snapshot()
+
+    @app.post("/api/halt")
+    def post_halt(body: dict):
+        if not isinstance(body, dict) or not isinstance(body.get("halt"), bool):
+            raise HTTPException(status_code=400, detail='body must be {"halt": bool}')
+        risk_service.set_halt(body["halt"])
+        return risk_service.snapshot()
+
     @app.get("/api/logs/{name}")
     def get_logs(name: str, lines: int = Query(200, ge=1, le=10000)):
         try:
@@ -86,6 +103,7 @@ def create_app(bot_manager: BotManager | None = None,
     # expose for tests / main
     app.state.bot_manager = bot_manager
     app.state.ib_monitor = ib_monitor
+    app.state.risk_service = risk_service
     return app
 
 
