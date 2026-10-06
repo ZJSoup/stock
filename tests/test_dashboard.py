@@ -62,3 +62,48 @@ def test_ib_snapshot_shape_when_disconnected():
     assert snap["positions"] == []
     assert "error" in snap
     # must never raise even with no IB running
+
+
+def test_tail_log_unknown_name():
+    from dashboard.logs import tail_log
+    import pytest
+    with pytest.raises(ValueError):
+        tail_log("bogus")
+
+
+def test_tail_log_missing_file():
+    from dashboard.logs import tail_log
+    out = tail_log("spy-turbo", lines=10)
+    assert out["lines"] == [] or isinstance(out["lines"], list)
+
+
+def test_config_roundtrip(tmp_path, monkeypatch):
+    from dashboard import config_editor
+    monkeypatch.setattr(config_editor, "CONFIG_PATH", tmp_path / "config.toml")
+    data = {
+        "host": "127.0.0.1", "port": 4002, "client_id": 100, "mode": "paper",
+        "risk": {"risk_pct": 0.10, "daily_loss_pct": 0.15, "giveback_pct": 0.50},
+        "window": {"start": "07:00", "end": "10:00"},
+        "signals": {"impulse_lookback": 5, "impulse_min_pct": 0.15, "retrace_min": 0.25,
+                    "retrace_max": 0.70, "basing_low_tol": 0.003, "sell_pressure_pct": 0.65,
+                    "divergence_bars": 3, "divergence_decline": 0.30, "entry_rr": 1.0},
+    }
+    written = config_editor.write_momo_config(data)
+    assert written["exists"] is True
+    back = config_editor.read_momo_config()
+    assert back["port"] == 4002
+    assert back["risk"]["risk_pct"] == pytest.approx(0.10)
+
+
+def test_config_rejects_bad_mode(tmp_path, monkeypatch):
+    from dashboard import config_editor
+    monkeypatch.setattr(config_editor, "CONFIG_PATH", tmp_path / "config.toml")
+    with pytest.raises(ValueError):
+        config_editor.write_momo_config({"mode": "yolo"})
+
+
+def test_config_rejects_live_port(tmp_path, monkeypatch):
+    from dashboard import config_editor
+    monkeypatch.setattr(config_editor, "CONFIG_PATH", tmp_path / "config.toml")
+    with pytest.raises(ValueError):
+        config_editor.write_momo_config({"mode": "paper", "port": 4001})
